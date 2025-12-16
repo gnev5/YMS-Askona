@@ -8,8 +8,8 @@ SECRET_KEY = os.getenv("JWT_SECRET", "dev-secret-change")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
+# Use bcrypt_sha256 to avoid backend-specific 72-byte limitations and wrap checks
+pwd_context = CryptContext(schemes=["bcrypt_sha256"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
