@@ -10,6 +10,20 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+  setup:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+    environment:
+      - POSTGRES_USER=yms
+      - POSTGRES_PASSWORD=yms_password
+      - POSTGRES_DB=yms
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - PYTHONPATH=/app
+    command: sh -c "python -m app.setup_database"
   backend:
     build:
       context: ./backend
