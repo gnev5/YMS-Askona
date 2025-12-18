@@ -105,7 +105,6 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
     }
   }, [isOpen, selectedSlot])
 
-  // Фильтрация поставщиков при изменении поиска
   useEffect(() => {
     if (supplierSearch.trim() === '') {
       setFilteredSuppliers([])
@@ -125,7 +124,7 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
         setForm(prev => ({ ...prev, vehicle_type_id: data[0].id }))
       }
     } catch (e: any) {
-      setError('Ошибка загрузки типов ТС')
+      setError('Не удалось загрузить типы ТС')
     }
   }
 
@@ -201,8 +200,6 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
 
     try {
       const token = localStorage.getItem('token')
-      
-      // Подготавливаем данные для отправки, добавляя zone_id из выбранного поставщика
       const bookingData = {
         ...form,
         zone_id: selectedSupplier?.zone_id
@@ -214,7 +211,7 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
       onBookingSuccess()
       onClose()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка создания записи')
+      setError(e.response?.data?.detail || 'Не получилось сохранить бронь')
     } finally {
       setLoading(false)
     }
@@ -223,209 +220,177 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
   if (!isOpen) return null
 
   return (
-    <div 
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000
-      }}
-      onClick={handleClickOutside}
-    >
-      <div style={{
-        backgroundColor: 'white',
-        padding: 24,
-        borderRadius: 8,
-        width: '100%',
-        maxWidth: 400
-      }}>
-        <h3>Записаться на время</h3>
-        
-        {selectedSlot && (
-          <div style={{ marginBottom: 16, color: '#666' }}>
-            <p style={{ marginBottom: 8 }}>
-              {selectedSlot.start.toLocaleDateString('ru-RU')} {selectedSlot.start.toTimeString().slice(0, 5)} - {selectedSlot.end.toTimeString().slice(0, 5)}
-            </p>
-            {selectedSlot.availableDocks && selectedSlot.availableDocks.length > 0 && (
-              <p style={{ fontSize: '14px', color: '#059669', marginBottom: 0 }}>
-                🏭 Доступные доки: {selectedSlot.availableDocks.map(dockId => {
-                  const dock = docks.find(d => d.id === dockId)
-                  return dock ? dock.name : `Док #${dockId}`
-                }).join(', ')}
-              </p>
-            )}
-          </div>
-        )}
+    <div className="modal-overlay" onClick={handleClickOutside}>
+      <div className="modal-content" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Новое бронирование</h3>
+          <button className="close-btn" type="button" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          {selectedSlot && (
+            <div>
+              <div className="pill" style={{ marginBottom: 6 }}>
+                {selectedSlot.start.toLocaleDateString('ru-RU')} · {selectedSlot.start.toTimeString().slice(0, 5)} – {selectedSlot.end.toTimeString().slice(0, 5)}
+              </div>
+              {selectedSlot.availableDocks && selectedSlot.availableDocks.length > 0 && (
+                <div className="badge badge-success">
+                  Доки: {selectedSlot.availableDocks.map(dockId => {
+                    const dock = docks.find(d => d.id === dockId)
+                    return dock ? dock.name : `Док #${dockId}`
+                  }).join(', ')}
+                </div>
+              )}
+            </div>
+          )}
 
-        {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
+          {error && <div className="error">{error}</div>}
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Тип ТС:</label>
-            <select 
-              value={form.vehicle_type_id} 
-              onChange={e => setForm({ ...form, vehicle_type_id: Number(e.target.value) })}
-              style={{ width: '100%', padding: 8 }}
-            >
-              <option value={0}>Выберите тип ТС</option>
-              {vehicleTypes.map(vt => (
-                <option key={vt.id} value={vt.id}>{vt.name} ({vt.duration_minutes} мин)</option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Номер ТС:</label>
-            <input
-              type="text"
-              value={form.vehicle_plate}
-              onChange={e => setForm({ ...form, vehicle_plate: e.target.value })}
-              placeholder="A123BC77"
-              style={{ width: '100%', padding: 8 }}
-              required
-            />
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Водитель:</label>
-            <input
-              type="text"
-              value={form.driver_full_name}
-              onChange={e => setForm({ ...form, driver_full_name: e.target.value })}
-              placeholder="Иванов Иван Иванович"
-              style={{ width: '100%', padding: 8 }}
-              required
-            />
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Телефон:</label>
-            <input
-              type="tel"
-              value={form.driver_phone}
-              onChange={e => setForm({ ...form, driver_phone: e.target.value })}
-              placeholder="+7 (999) 123-45-67"
-              style={{ width: '100%', padding: 8 }}
-              required
-            />
-          </div>
-
-          <div style={{ marginBottom: 16, position: 'relative' }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Поставщик:</label>
-            <input
-              type="text"
-              value={supplierSearch}
-              onChange={e => handleSupplierSearchChange(e.target.value)}
-              onFocus={() => setShowSupplierDropdown(true)}
-              placeholder="Начните вводить название поставщика..."
-              style={{ width: '100%', padding: 8 }}
-            />
-            {showSupplierDropdown && filteredSuppliers.length > 0 && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                backgroundColor: 'white',
-                border: '1px solid #e5e7eb',
-                borderTop: 'none',
-                borderRadius: '0 0 4px 4px',
-                maxHeight: '200px',
-                overflowY: 'auto',
-                zIndex: 1000
-              }}>
-                {filteredSuppliers.map(supplier => (
-                  <div
-                    key={supplier.id}
-                    onClick={() => handleSupplierSelect(supplier)}
-                    style={{
-                      padding: '8px 12px',
-                      cursor: 'pointer',
-                      borderBottom: '1px solid #f3f4f6'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
-                  >
-                    {supplier.name}
-                  </div>
+          <form onSubmit={handleSubmit} className="form-grid">
+            <div className="field">
+              <label>Тип ТС</label>
+              <select 
+                value={form.vehicle_type_id} 
+                onChange={e => setForm({ ...form, vehicle_type_id: Number(e.target.value) })}
+              >
+                <option value={0}>Выберите тип</option>
+                {vehicleTypes.map(vt => (
+                  <option key={vt.id} value={vt.id}>{vt.name} ({vt.duration_minutes} мин)</option>
                 ))}
-              </div>
-            )}
-            {selectedSupplier && (
-              <div style={{ marginTop: 4, fontSize: '12px', color: '#059669' }}>
-                ✅ Выбран: {selectedSupplier.name}
-                {selectedSupplier.zone_id && (
-                  <span style={{ marginLeft: 8 }}>
-                    (Зона: {zones.find(z => z.id === selectedSupplier.zone_id)?.name || 'Неизвестно'})
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
+              </select>
+            </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Тип перевозки:</label>
-            <select 
-              value={form.transport_type_id || ''} 
-              onChange={e => setForm({ ...form, transport_type_id: e.target.value ? Number(e.target.value) : undefined })}
-              style={{ width: '100%', padding: 8 }}
-            >
-              <option value="">Выберите тип перевозки</option>
-              {transportTypes.map(transportType => (
-                <option key={transportType.id} value={transportType.id}>
-                  {transportType.name}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div className="field">
+              <label>Госномер</label>
+              <input
+                type="text"
+                value={form.vehicle_plate}
+                onChange={e => setForm({ ...form, vehicle_plate: e.target.value })}
+                placeholder="A123BC77"
+                required
+              />
+            </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Кубы:</label>
-            <input
-              type="number"
-              step="0.01"
-              value={form.cubes || ''}
-              onChange={e => setForm({ ...form, cubes: e.target.value ? parseFloat(e.target.value) : undefined })}
-              placeholder="0.00"
-              style={{ width: '100%', padding: 8 }}
-            />
-          </div>
+            <div className="field">
+              <label>Водитель</label>
+              <input
+                type="text"
+                value={form.driver_full_name}
+                onChange={e => setForm({ ...form, driver_full_name: e.target.value })}
+                placeholder="ФИО полностью"
+                required
+              />
+            </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4 }}>Транспортный лист:</label>
-            <input
-              type="text"
-              value={form.transport_sheet || ''}
-              onChange={e => setForm({ ...form, transport_sheet: e.target.value })}
-              placeholder="Номер транспортного листа"
-              maxLength={20}
-              style={{ width: '100%', padding: 8 }}
-            />
-          </div>
+            <div className="field">
+              <label>Телефон водителя</label>
+              <input
+                type="tel"
+                value={form.driver_phone}
+                onChange={e => setForm({ ...form, driver_phone: e.target.value })}
+                placeholder="+7 (999) 123-45-67"
+                required
+              />
+            </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button 
-              type="button" 
-              onClick={onClose}
-              style={{ flex: 1, padding: 8 }}
-            >
-              Отмена
-            </button>
-            <button 
-              type="submit" 
-              disabled={loading}
-              style={{ flex: 1, padding: 8, backgroundColor: '#2563eb', color: 'white' }}
-            >
-              {loading ? 'Сохранение...' : 'Записаться'}
-            </button>
-          </div>
-        </form>
+            <div className="field" style={{ position: 'relative' }}>
+              <label>Поставщик</label>
+              <input
+                type="text"
+                value={supplierSearch}
+                onChange={e => handleSupplierSearchChange(e.target.value)}
+                onFocus={() => setShowSupplierDropdown(true)}
+                placeholder="Начните вводить название"
+              />
+              {showSupplierDropdown && filteredSuppliers.length > 0 && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  backgroundColor: 'white',
+                  border: '1px solid #e5e7eb',
+                  borderTop: 'none',
+                  borderRadius: '0 0 8px 8px',
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  zIndex: 1000
+                }}>
+                  {filteredSuppliers.map(supplier => (
+                    <div
+                      key={supplier.id}
+                      onClick={() => handleSupplierSelect(supplier)}
+                      style={{
+                        padding: '10px 12px',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid #f3f4f6'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                    >
+                      {supplier.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {selectedSupplier && (
+                <div className="hint" style={{ marginTop: 4 }}>
+                  Выбран: {selectedSupplier.name}
+                  {selectedSupplier.zone_id && (
+                    <span style={{ marginLeft: 6 }}>
+                      (Зона: {zones.find(z => z.id === selectedSupplier.zone_id)?.name || '—'})
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="field">
+              <label>Тип перевозки</label>
+              <select 
+                value={form.transport_type_id || ''} 
+                onChange={e => setForm({ ...form, transport_type_id: e.target.value ? Number(e.target.value) : undefined })}
+              >
+                <option value="">Выберите тип</option>
+                {transportTypes.map(transportType => (
+                  <option key={transportType.id} value={transportType.id}>
+                    {transportType.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label>Объем, м³</label>
+              <input
+                type="number"
+                step="0.01"
+                value={form.cubes || ''}
+                onChange={e => setForm({ ...form, cubes: e.target.value ? parseFloat(e.target.value) : undefined })}
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="field">
+              <label>Транспортная накладная</label>
+              <input
+                type="text"
+                value={form.transport_sheet || ''}
+                onChange={e => setForm({ ...form, transport_sheet: e.target.value })}
+                placeholder="Номер накладной"
+                maxLength={20}
+              />
+            </div>
+
+            <div className="form-footer">
+              <button className="btn-ghost" type="button" onClick={onClose}>
+                Отмена
+              </button>
+              <button type="submit" disabled={loading}>
+                {loading ? 'Сохраняем...' : 'Забронировать'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   )
