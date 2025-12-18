@@ -458,8 +458,11 @@ const AppShell: React.FC<{ page: Page; onNavigate: (p: Page) => void; children: 
 const App: React.FC = () => {
   const { token } = useAuth()
   const [page, setPage] = useState<Page>('calendar')
+  const [calendarKey, setCalendarKey] = useState(0)
 
   if (!token) return <Login />
+
+  const refreshCalendar = () => setCalendarKey(prev => prev + 1)
 
   const renderPage = () => {
     switch (page) {
@@ -478,13 +481,13 @@ const App: React.FC = () => {
       case 'admin-time-slots':
         return <AdminTimeSlots onBack={() => setPage('admin-schedule')} />
       case 'my-bookings':
-        return <MyBookings onBack={() => setPage('calendar')} />
+        return <MyBookings onBack={() => setPage('calendar')} onBookingCancelled={refreshCalendar} />
       case 'admin-users':
         return <AdminUsers onBack={() => setPage('calendar')} />
       case 'analytics':
         return <Analytics onBack={() => setPage('calendar')} />
       default:
-        return <CalendarView goToPage={setPage} />
+        return <CalendarView goToPage={setPage} key={calendarKey} />
     }
   }
 

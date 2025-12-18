@@ -29,7 +29,7 @@ interface Booking {
   user_full_name?: string
 }
 
-const MyBookings: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void; }> = ({ onBack, onBookingCancelled }) => {
   const { user } = useAuth()
   const [bookings, setBookings] = useState<Booking[]>([])
   const [filteredBookings, setFilteredBookings] = useState<Booking[]>([])
@@ -110,12 +110,15 @@ const MyBookings: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   useEffect(() => { applyFilters() }, [filters, bookings])
 
   const cancelBooking = async (bookingId: number) => {
-    if (!confirm('Отменить запись?')) return
+    if (!window.confirm('Отменить запись?')) return
     setError(null); setSuccess(null)
     try {
       await axios.put(`${API_BASE}/api/bookings/${bookingId}/cancel`, {}, { headers })
       setSuccess('Запись отменена')
       loadBookings()
+      if (onBookingCancelled) {
+        onBookingCancelled()
+      }
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Ошибка отмены')
     }

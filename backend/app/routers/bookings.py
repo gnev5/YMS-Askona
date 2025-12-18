@@ -139,6 +139,11 @@ def cancel_booking(
     booking.status = "cancelled"
     booking.updated_at = datetime.utcnow()
     
+    # Удаляем связи с временными слотами, чтобы они снова стали доступны
+    db.query(models.BookingTimeSlot).filter(
+        models.BookingTimeSlot.booking_id == booking_id
+    ).delete()
+    
     db.commit()
     
     return {"message": "Booking cancelled successfully"}
