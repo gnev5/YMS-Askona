@@ -54,7 +54,7 @@ const localizer = dateFnsLocalizer({
 })
 
 // Use full backend URL instead of proxy
-const API_BASE = 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 interface TimeSlot {
   id: number
@@ -94,7 +94,9 @@ const Login: React.FC = () => {
         timeout,
       ])
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || (err?.message === 'timeout' ? 'Таймаут запроса' : 'Ошибка авторизации')
+
+      console.error(err);
+      const msg = err?.response?.data?.detail || (err?.message === 'timeout' ? 'Таймаут запроса' : 'Ошибка логина')
       setError(msg)
     } finally {
       setLoading(false)
