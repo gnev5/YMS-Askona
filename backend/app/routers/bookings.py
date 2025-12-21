@@ -7,6 +7,7 @@ import uuid
 from .. import models, schemas
 from ..db import get_db
 from ..deps import get_current_user
+from .prr_limits import get_duration
 
 router = APIRouter()
 
@@ -18,11 +19,25 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     if not vehicle_type:
         raise HTTPException(status_code=404, detail="Vehicle type not found")
     
-    if vehicle_type.duration_minutes <= 0:
-        raise HTTPException(status_code=400, detail="Invalid vehicle type duration")
+    try:
+        duration = get_duration(
+            object_id=booking.object_id,
+            supplier_id=booking.supplier_id,
+            transport_type_id=booking.transport_type_id,
+            vehicle_type_id=booking.vehicle_type_id,
+            db=db
+        ).duration_minutes
+    except HTTPException as e:
+        if e.status_code == 404:
+            duration = vehicle_type.duration_minutes
+        else:
+            raise e
+
+    if duration <= 0:
+        raise HTTPException(status_code=400, detail="Invalid duration")
     
     # Вычисляем требуемое количество слотов
-    required_slots = vehicle_type.duration_minutes // 30 + (1 if vehicle_type.duration_minutes % 30 != 0 else 0)
+    required_slots = duration // 30 + (1 if duration % 30 != 0 else 0)
     
     # Парсим дату и время начала
     booking_date = datetime.strptime(booking.booking_date, "%Y-%m-%d").date()

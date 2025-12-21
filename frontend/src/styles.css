@@ -85,7 +85,6 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
   border: 1px solid transparent;
   transition: all .16s ease;
 }
-.nav-item span { flex: 1; }
 .nav-item .nav-pill {
   background: rgba(255, 255, 255, 0.12);
   padding: 2px 8px;
@@ -303,3 +302,24 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 .table th { color: var(--muted); font-weight: 700; font-size: 13px; }
 
 .error { color: var(--danger); }
+
+.recommended-day {
+  background-color: #e6ffed;
+}
+
+.submenu {
+  padding-left: 20px;
+}
+
+.submenu-item {
+  padding-left: 30px;
+}
+
+.chevron {
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+
+.chevron.open {
+  transform: rotate(180deg);
+}

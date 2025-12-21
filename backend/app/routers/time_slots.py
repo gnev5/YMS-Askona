@@ -15,13 +15,55 @@ router = APIRouter()
 def list_time_slots(
     from_date: date,
     to_date: date,
+    object_id: Optional[int] = None,
+    supplier_id: Optional[int] = None,
+    transport_type_id: Optional[int] = None,
+    booking_type: Optional[str] = None, # "in" or "out"
     db: Session = Depends(get_db),
 ):
     """Получить слоты для календаря (обновленная версия)"""
+    
+    # Start with a query for all docks
+    docks_query = db.query(models.Dock.id)
+
+    if object_id:
+        docks_query = docks_query.filter(models.Dock.object_id == object_id)
+
+    if booking_type == "in":
+        docks_query = docks_query.filter(models.Dock.dock_type.in_([models.DockType.entrance, models.DockType.universal]))
+    elif booking_type == "out":
+        docks_query = docks_query.filter(models.Dock.dock_type.in_([models.DockType.exit, models.DockType.universal]))
+
+    if supplier_id:
+        supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
+        if supplier and supplier.zone_id:
+            # Docks that have no specific zones or are in the supplier's zone
+            docks_query = docks_query.filter(
+                or_(
+                    ~models.Dock.available_zones.any(),
+                    models.Dock.available_zones.any(models.Zone.id == supplier.zone_id)
+                )
+            )
+
+    if transport_type_id:
+        # Docks that have no specific transport types or have the given transport type
+        docks_query = docks_query.filter(
+            or_(
+                ~models.Dock.available_transport_types.any(),
+                models.Dock.available_transport_types.any(models.TransportTypeRef.id == transport_type_id)
+            )
+        )
+
+    dock_ids = [d[0] for d in docks_query.all()]
+
+    if not dock_ids:
+        return []
+
     slots = db.query(models.TimeSlot).filter(
         models.TimeSlot.slot_date >= from_date,
         models.TimeSlot.slot_date <= to_date,
-        models.TimeSlot.is_available == True
+        models.TimeSlot.is_available == True,
+        models.TimeSlot.dock_id.in_(dock_ids)
     ).all()
     
     # Подсчитываем занятость

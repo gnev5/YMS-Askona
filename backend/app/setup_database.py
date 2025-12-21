@@ -7,7 +7,7 @@ from datetime import time, datetime, date, timedelta
 from .db import SessionLocal, engine, Base
 from . import models
 from .security import get_password_hash
-from .models import TransportType, DockType
+from .models import TransportType, DockType, ObjectType
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,58 +18,6 @@ def create_schema(db: Session):
     logger.info("Creating all tables from Base metadata...")
     Base.metadata.create_all(bind=engine)
     logger.info("Tables from metadata created.")
-
-    logger.info("Applying additional schema migrations for new objects...")
-    try:
-        # 1. Create transport_types table
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS transport_types (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) UNIQUE NOT NULL,
-                enum_value VARCHAR(50) NOT NULL
-            )
-        """))
-        # 2. Create zones table
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS zones (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) UNIQUE NOT NULL
-            )
-        """))
-        # 3. Create suppliers table
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS suppliers (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL,
-                comment TEXT,
-                zone_id INTEGER REFERENCES zones(id)
-            )
-        """))
-        # 4. Create user_suppliers table
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS user_suppliers (
-                user_id INTEGER REFERENCES users(id),
-                supplier_id INTEGER REFERENCES suppliers(id),
-                PRIMARY KEY (user_id, supplier_id)
-            )
-        """))
-
-        # 5. Add new columns to docks
-        db.execute(text("ALTER TABLE docks ADD COLUMN IF NOT EXISTS dock_type VARCHAR(20) DEFAULT 'universal' NOT NULL"))
-        db.execute(text("ALTER TABLE docks ADD COLUMN IF NOT EXISTS zone_id INTEGER REFERENCES zones(id)"))
-
-        # 6. Add new columns to bookings
-        db.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id)"))
-        db.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS zone_id INTEGER REFERENCES zones(id)"))
-        db.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS transport_type_id INTEGER REFERENCES transport_types(id)"))
-        db.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cubes FLOAT"))
-        db.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS transport_sheet VARCHAR(20)"))
-
-        db.commit()
-        logger.info("Additional schema migrations applied successfully.")
-    except Exception as e:
-        logger.error(f"Error applying additional schema migrations: {e}")
-        raise
 
 
 def create_admin_user(db: Session):
@@ -89,6 +37,20 @@ def create_admin_user(db: Session):
 
 def seed_initial_data(db: Session):
     """Seeds the database with initial data."""
+    # Seed objects
+    logger.info("Seeding objects...")
+    obukhovo = db.query(models.Object).filter(models.Object.name == "Обухово").first()
+    if not obukhovo:
+        obukhovo = models.Object(name="Обухово", object_type=ObjectType.warehouse, address="142440, МО, Ногинский р-н, п. Обухово, Кудиновское ш., д. 4")
+        db.add(obukhovo)
+        db.flush()
+    
+    akson = db.query(models.Object).filter(models.Object.name == "Аксон").first()
+    if not akson:
+        akson = models.Object(name="Аксон", object_type=ObjectType.warehouse, address="Ногинский р-н, п. Аксено-Бутырское")
+        db.add(akson)
+        db.flush()
+
     # Seed docks
     logger.info("Seeding docks...")
     default_docks = [
@@ -100,7 +62,7 @@ def seed_initial_data(db: Session):
     for d in default_docks:
         exists = db.query(models.Dock).filter(models.Dock.name == d["name"]).first()
         if not exists:
-            dock = models.Dock(name=d["name"], status=d["status"], dock_type=d["dock_type"])
+            dock = models.Dock(name=d["name"], status=d["status"], dock_type=d["dock_type"], object_id=obukhovo.id)
             db.add(dock)
             db.flush()
             dock_ids.append(dock.id)
@@ -159,6 +121,7 @@ def seed_initial_data(db: Session):
     # Seed suppliers
     logger.info("Seeding suppliers...")
     suppliers_data = [
+        {"name": "Аскона", "comment": "Собственный поставщик", "zone_id": zone_map.get("Эрго/решетки/корпус")},
         {"name": "ООО 'Мебель Про'", "comment": "Основной поставщик мебели", "zone_id": zone_map.get("Эрго/решетки/корпус")},
         {"name": "ИП Иванов И.И.", "comment": "Поставщик аксессуаров", "zone_id": zone_map.get("Аксессуары/матрасы")},
         {"name": "ЗАО 'Импорт Трейд'", "comment": "Импортные поставщики", "zone_id": zone_map.get("Закупка Импорт")},

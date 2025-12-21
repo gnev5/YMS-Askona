@@ -22,11 +22,44 @@ class DockType(enum.Enum):
     exit = "exit"
 
 
+class ObjectType(enum.Enum):
+    warehouse = "warehouse"
+    production = "production"
+    retail = "retail"
+    pickup_point = "pickup_point"
+    other = "other"
+
+
 class TransportType(enum.Enum):
     own_production = "own_production"
     purchased = "purchased"
     container = "container"
     return_goods = "return_goods"
+
+
+class Object(Base):
+    __tablename__ = "objects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    object_type: Mapped[ObjectType] = mapped_column(Enum(ObjectType), nullable=False)
+    address: Mapped[str] = mapped_column(String(255), nullable=True)
+
+    docks: Mapped[list["Dock"]] = relationship("Dock", back_populates="object")
+    prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="object")
+
+
+dock_zone_association = Table(
+    'dock_zone_association', Base.metadata,
+    Column('dock_id', Integer, ForeignKey('docks.id', ondelete="CASCADE"), primary_key=True),
+    Column('zone_id', Integer, ForeignKey('zones.id', ondelete="CASCADE"), primary_key=True)
+)
+
+dock_transport_type_association = Table(
+    'dock_transport_type_association', Base.metadata,
+    Column('dock_id', Integer, ForeignKey('docks.id', ondelete="CASCADE"), primary_key=True),
+    Column('transport_type_id', Integer, ForeignKey('transport_types.id', ondelete="CASCADE"), primary_key=True)
+)
 
 
 class User(Base):
@@ -53,10 +86,13 @@ class Dock(Base):
     
     # Новые поля
     dock_type: Mapped[DockType] = mapped_column(Enum(DockType), default=DockType.universal, nullable=False)
-    zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
-
+    
     # Связи
-    zone: Mapped["Zone | None"] = relationship("Zone", back_populates="docks")
+    object_id: Mapped[int] = mapped_column(ForeignKey("objects.id"), nullable=False)
+    object: Mapped["Object"] = relationship("Object", back_populates="docks")
+    
+    available_zones: Mapped[list["Zone"]] = relationship("Zone", secondary=dock_zone_association, back_populates="docks")
+    available_transport_types: Mapped[list["TransportTypeRef"]] = relationship("TransportTypeRef", secondary=dock_transport_type_association, back_populates="docks")
 
 
 class VehicleType(Base):
@@ -78,6 +114,9 @@ class TransportTypeRef(Base):
 
     # Связи
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="transport_type")
+    docks: Mapped[list["Dock"]] = relationship("Dock", secondary=dock_transport_type_association, back_populates="available_transport_types")
+    suppliers: Mapped[list["Supplier"]] = relationship("Supplier", back_populates="transport_type")
+    prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="transport_type")
 
 
 class Zone(Base):
@@ -87,7 +126,7 @@ class Zone(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
     # Связи
-    docks: Mapped[list["Dock"]] = relationship("Dock", back_populates="zone")
+    docks: Mapped[list["Dock"]] = relationship("Dock", secondary=dock_zone_association, back_populates="available_zones")
     suppliers: Mapped[list["Supplier"]] = relationship("Supplier", back_populates="zone")
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="zone")
 
@@ -104,6 +143,11 @@ class Supplier(Base):
     zone: Mapped["Zone"] = relationship("Zone", back_populates="suppliers")
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="supplier")
     user_suppliers: Mapped[list["UserSupplier"]] = relationship("UserSupplier", back_populates="supplier")
+
+    transport_type_id: Mapped[int | None] = mapped_column(ForeignKey("transport_types.id"), nullable=True)
+    transport_type: Mapped["TransportTypeRef | None"] = relationship("TransportTypeRef", back_populates="suppliers")
+    
+    prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="supplier")
 
 
 # Связь многие-ко-многим между пользователями и поставщиками
@@ -218,4 +262,24 @@ class BookingTimeSlot(Base):
 
     __table_args__ = (
         UniqueConstraint("booking_id", "time_slot_id", name="uq_booking_time_slot"),
+    )
+
+
+class PrrLimit(Base):
+    __tablename__ = 'prr_limits'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    object_id: Mapped[int] = mapped_column(ForeignKey('objects.id'), nullable=False)
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey('suppliers.id'), nullable=True)
+    transport_type_id: Mapped[int | None] = mapped_column(ForeignKey('transport_types.id'), nullable=True)
+    vehicle_type_id: Mapped[int | None] = mapped_column(ForeignKey('vehicle_types.id'), nullable=True)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    object: Mapped["Object"] = relationship("Object", back_populates="prr_limits")
+    supplier: Mapped["Supplier | None"] = relationship("Supplier", back_populates="prr_limits")
+    transport_type: Mapped["TransportTypeRef | None"] = relationship("TransportTypeRef", back_populates="prr_limits")
+    vehicle_type: Mapped["VehicleType | None"] = relationship("VehicleType")
+
+    __table_args__ = (
+        UniqueConstraint('object_id', 'supplier_id', 'transport_type_id', 'vehicle_type_id', name='_object_supplier_transport_vehicle_uc'),
     )

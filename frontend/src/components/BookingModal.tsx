@@ -51,9 +51,10 @@ interface BookingModalProps {
   onClose: () => void
   selectedSlot: { start: Date; end: Date; slotId: number; availableDocks?: number[] } | null
   onBookingSuccess: () => void
+  selectedObject: number | null
 }
 
-const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSlot, onBookingSuccess }) => {
+const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSlot, onBookingSuccess, selectedObject }) => {
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
   const [zones, setZones] = useState<Zone[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -63,6 +64,7 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
   const [supplierSearch, setSupplierSearch] = useState('')
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false)
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
+  const [duration, setDuration] = useState<number | null>(null)
   const [form, setForm] = useState<BookingForm>({
     vehicle_plate: '',
     driver_full_name: '',
@@ -101,10 +103,32 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
         setSelectedSupplier(null)
         setSupplierSearch('')
         setFilteredSuppliers([])
+        setDuration(null)
       }
     }
   }, [isOpen, selectedSlot])
 
+  useEffect(() => {
+    const fetchDuration = async () => {
+        if (selectedObject && form.vehicle_type_id) {
+            try {
+                const { data } = await axios.get(`${API_BASE}/api/prr-limits/duration/`, {
+                    params: {
+                        object_id: selectedObject,
+                        supplier_id: form.supplier_id,
+                        transport_type_id: form.transport_type_id,
+                        vehicle_type_id: form.vehicle_type_id,
+                    }
+                });
+                setDuration(data.duration_minutes);
+            } catch (error) {
+                setDuration(null);
+            }
+        }
+    };
+    fetchDuration();
+  }, [selectedObject, form.vehicle_type_id, form.supplier_id, form.transport_type_id]);
+  
   useEffect(() => {
     if (supplierSearch.trim() === '') {
       setFilteredSuppliers([])
@@ -202,7 +226,8 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
       const token = localStorage.getItem('token')
       const bookingData = {
         ...form,
-        zone_id: selectedSupplier?.zone_id
+        zone_id: selectedSupplier?.zone_id,
+        object_id: selectedObject,
       }
       
       await axios.post(`${API_BASE}/api/bookings/`, bookingData, {
@@ -243,6 +268,11 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
             </div>
           )}
 
+          {duration && (
+            <div className="badge badge-info">
+              Длительность: {duration} мин.
+            </div>
+          )}
           {error && <div className="error">{error}</div>}
 
           <form onSubmit={handleSubmit} className="form-grid">

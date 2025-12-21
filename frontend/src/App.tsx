@@ -15,7 +15,10 @@ import AdminTransportTypes from './pages/AdminTransportTypes'
 import AdminTimeSlots from './pages/AdminTimeSlots'
 import MyBookings from './pages/MyBookings'
 import AdminUsers from './pages/AdminUsers'
+import AdminObjects from './pages/AdminObjects'
 import Analytics from './pages/Analytics'
+import BookingIn from './pages/BookingIn'
+import BookingOut from './pages/BookingOut'
 
 type Page =
   | 'calendar'
@@ -29,19 +32,32 @@ type Page =
   | 'my-bookings'
   | 'admin-users'
   | 'analytics'
+  | 'booking-in'
+  | 'booking-out'
+  | 'admin-objects'
 
-const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean }[] = [
-  { id: 'calendar', label: 'Календарь', icon: '📅' },
-  { id: 'my-bookings', label: 'Мои бронирования', icon: '🧾' },
-  { id: 'analytics', label: 'Аналитика', icon: '📊', admin: true },
-  { id: 'admin-schedule', label: 'График работы', icon: '🗓', admin: true },
-  { id: 'admin-docks', label: 'Доки', icon: '🚪', admin: true },
-  { id: 'admin-vehicle-types', label: 'Типы ТС', icon: '🚛', admin: true },
-  { id: 'admin-zones', label: 'Зоны', icon: '🧭', admin: true },
-  { id: 'admin-suppliers', label: 'Поставщики', icon: '🏭', admin: true },
-  { id: 'admin-transport-types', label: 'Типы перевозки', icon: '📦', admin: true },
-  { id: 'admin-time-slots', label: 'Тайм-слоты', icon: '⏱', admin: true },
-  { id: 'admin-users', label: 'Пользователи', icon: '👥', admin: true },
+const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, children?: {id: Page, label: string}[] }[] = [
+  { id: 'calendar', label: 'Календарь', icon: 'calendar_today' },
+  { id: 'my-bookings', label: 'Мои бронирования', icon: 'receipt_long' },
+  {
+    id: 'booking-in',
+    label: 'Запись на ПРР',
+    icon: 'local_shipping',
+    children: [
+      { id: 'booking-in', label: 'Вход/поставка' },
+      { id: 'booking-out', label: 'Выход/отгрузка' },
+    ],
+  },
+  { id: 'analytics', label: 'Аналитика', icon: 'analytics', admin: true },
+  { id: 'admin-schedule', label: 'График работы', icon: 'schedule', admin: true },
+  { id: 'admin-docks', label: 'Доки', icon: 'door_sliding', admin: true },
+  { id: 'admin-objects', label: 'Объекты', icon: 'apartment', admin: true },
+  { id: 'admin-vehicle-types', label: 'Типы ТС', icon: 'rv_hookup', admin: true },
+  { id: 'admin-zones', label: 'Зоны', icon: 'layers', admin: true },
+  { id: 'admin-suppliers', label: 'Поставщики', icon: 'factory', admin: true },
+  { id: 'admin-transport-types', label: 'Типы перевозки', icon: 'local_shipping', admin: true },
+  { id: 'admin-time-slots', label: 'Тайм-слоты', icon: 'av_timer', admin: true },
+  { id: 'admin-users', label: 'Пользователи', icon: 'group', admin: true },
 ]
 
 const locales = { ru }
@@ -401,6 +417,19 @@ const AppShell: React.FC<{ page: Page; onNavigate: (p: Page) => void; children: 
   const { user, logout } = useAuth()
   const isAdmin = user?.role?.toLowerCase?.().includes('admin')
   const navItems = NAV_ITEMS.filter(item => !item.admin || isAdmin)
+  const [openMenu, setOpenMenu] = useState<Page | null>(null)
+
+  const handleNavigate = (p: Page) => {
+    onNavigate(p)
+  }
+
+  const handleMenuClick = (item: typeof navItems[0]) => {
+    if (item.children) {
+      setOpenMenu(openMenu === item.id ? null : item.id)
+    } else {
+      handleNavigate(item.id)
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -414,14 +443,31 @@ const AppShell: React.FC<{ page: Page; onNavigate: (p: Page) => void; children: 
         </div>
         <nav>
           {navItems.map(item => (
-            <div
-              key={item.id}
-              className={`nav-item ${page === item.id ? 'active' : ''}`}
-              onClick={() => onNavigate(item.id)}
-            >
-              <span>{item.icon}</span>
-              <span>{item.label}</span>
-              {item.admin && <span className="nav-pill">Admin</span>}
+            <div key={item.id}>
+              <div
+                className={`nav-item ${page === item.id ? 'active' : ''}`}
+                onClick={() => handleMenuClick(item)}
+              >
+                <span className="material-icons">{item.icon}</span>
+                <span>{item.label}</span>
+                {item.children && <span className={`chevron ${openMenu === item.id ? 'open' : ''}`}>▼</span>}
+              </div>
+              {item.children && openMenu === item.id && (
+                <div className="submenu">
+                  {item.children.map(child => (
+                    <div
+                      key={child.id}
+                      className={`nav-item submenu-item ${page === child.id ? 'active' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleNavigate(child.id);
+                      }}
+                    >
+                      <span>{child.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </nav>
@@ -484,8 +530,14 @@ const App: React.FC = () => {
         return <MyBookings onBack={() => setPage('calendar')} onBookingCancelled={refreshCalendar} />
       case 'admin-users':
         return <AdminUsers onBack={() => setPage('calendar')} />
+      case 'admin-objects':
+        return <AdminObjects onBack={() => setPage('calendar')} />
       case 'analytics':
         return <Analytics onBack={() => setPage('calendar')} />
+      case 'booking-in':
+        return <BookingIn />
+      case 'booking-out':
+        return <BookingOut />
       default:
         return <CalendarView goToPage={setPage} key={calendarKey} />
     }

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .db import engine, Base
-from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics
+from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics, objects, prr_limits
 
 app = FastAPI(title="YMS Backend")
 
@@ -27,3 +27,5 @@ app.include_router(transport_types.router)
 app.include_router(zones.router)
 app.include_router(suppliers.router)
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(objects.router, prefix="/api/objects", tags=["objects"])
+app.include_router(prr_limits.router, prefix="/api/prr-limits", tags=["prr_limits"])

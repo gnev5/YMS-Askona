@@ -46,6 +46,53 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
+# Object schemas
+class ObjectBase(BaseModel):
+    name: str
+    object_type: str
+    address: Optional[str] = None
+
+class ObjectCreate(ObjectBase):
+    pass
+
+class ObjectUpdate(ObjectBase):
+    name: Optional[str] = None
+    object_type: Optional[str] = None
+    address: Optional[str] = None
+
+class Object(ObjectBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+# Zone schemas
+class ZoneBase(BaseModel):
+    name: str
+
+class ZoneCreate(ZoneBase):
+    pass
+
+class Zone(ZoneBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+# Transport Type schemas
+class TransportTypeBase(BaseModel):
+    name: str
+    enum_value: str
+
+class TransportTypeCreate(TransportTypeBase):
+    pass
+
+class TransportType(TransportTypeBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
 # Dock schemas
 class DockBase(BaseModel):
     name: str
@@ -54,13 +101,17 @@ class DockBase(BaseModel):
     width_meters: Optional[float] = None
     max_load_kg: Optional[float] = None
     dock_type: str = "universal"
-    zone_id: Optional[int] = None
+    object_id: int
 
 class DockCreate(DockBase):
-    pass
+    available_zone_ids: List[int] = []
+    available_transport_type_ids: List[int] = []
 
 class Dock(DockBase):
     id: int
+    object: Object
+    available_zones: List[Zone] = []
+    available_transport_types: List[TransportType] = []
 
     class Config:
         from_attributes = True
@@ -168,35 +219,6 @@ class BookingWithDetails(BaseModel):
     cubes: Optional[float] = None
     transport_sheet: Optional[str] = None
 
-# Новые схемы для справочников
-
-# Transport Type schemas
-class TransportTypeBase(BaseModel):
-    name: str
-    enum_value: str
-
-class TransportTypeCreate(TransportTypeBase):
-    pass
-
-class TransportType(TransportTypeBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-# Zone schemas
-class ZoneBase(BaseModel):
-    name: str
-
-class ZoneCreate(ZoneBase):
-    pass
-
-class Zone(ZoneBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
 # Supplier schemas
 class SupplierBase(BaseModel):
     name: str
@@ -244,6 +266,7 @@ class BookingBaseUpdated(BaseModel):
 class BookingCreateUpdated(BookingBaseUpdated):
     booking_date: str
     start_time: str
+    object_id: int
 
 class BookingUpdated(BookingBaseUpdated):
     id: int
@@ -261,3 +284,27 @@ class BookingWithDetailsUpdated(BookingWithDetails):
     transport_type_name: Optional[str] = None
     cubes: Optional[float] = None
     transport_sheet: Optional[str] = None
+
+# PrrLimit schemas
+class PrrLimitBase(BaseModel):
+    object_id: int
+    supplier_id: Optional[int] = None
+    transport_type_id: Optional[int] = None
+    vehicle_type_id: Optional[int] = None
+    duration_minutes: int
+
+class PrrLimitCreate(PrrLimitBase):
+    pass
+
+class PrrLimitUpdate(PrrLimitBase):
+    object_id: Optional[int] = None
+    supplier_id: Optional[int] = None
+    transport_type_id: Optional[int] = None
+    vehicle_type_id: Optional[int] = None
+    duration_minutes: Optional[int] = None
+
+class PrrLimit(PrrLimitBase):
+    id: int
+
+    class Config:
+        from_attributes = True
