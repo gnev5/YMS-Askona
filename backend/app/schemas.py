@@ -116,6 +116,12 @@ class Dock(DockBase):
     class Config:
         from_attributes = True
 
+class DockZoneUpdate(BaseModel):
+    zone_ids: List[int]
+
+class DockTransportTypeUpdate(BaseModel):
+    transport_type_ids: List[int]
+
 # Vehicle Type schemas
 class VehicleTypeBase(BaseModel):
     name: str

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 // Assuming schemas are similar to backend schemas
-interface Zone {
+interface TransportType {
   id: number;
   name: string;
 }
@@ -9,36 +9,37 @@ interface Zone {
 interface Dock {
   id: number;
   name: string;
-  available_zones: Zone[];
+  available_transport_types: TransportType[];
 }
 
-interface DockAssociationsModalProps {
+interface DockTransportTypeAssociationsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (dockId: number, zoneIds: number[]) => void;
+  onSave: (dockId: number, transportTypeIds: number[]) => void;
   dock: Dock | null;
 }
 
-const DockAssociationsModal: React.FC<DockAssociationsModalProps> = ({ isOpen, onClose, onSave, dock }) => {
-  const [allZones, setAllZones] = useState<Zone[]>([]);
-  const [selectedZoneIds, setSelectedZoneIds] = useState<Set<number>>(new Set());
+const DockTransportTypeAssociationsModal: React.FC<DockTransportTypeAssociationsModalProps> = ({ isOpen, onClose, onSave, dock }) => {
+  const [allTransportTypes, setAllTransportTypes] = useState<TransportType[]>([]);
+  const [selectedTransportTypeIds, setSelectedTransportTypeIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    // Fetch all available zones when the modal is opened
+    // Fetch all available transport types when the modal is opened
     if (isOpen) {
-      fetch('/api/zones/') // Assuming the prefix is handled by a proxy or base URL
+      // NOTE: Ensure the API endpoint is correct.
+      fetch('/api/transport-types/')
         .then(res => res.json())
-        .then((data: Zone[]) => {
-          setAllZones(data);
+        .then((data: TransportType[]) => {
+          setAllTransportTypes(data);
         })
         .catch(console.error);
     }
   }, [isOpen]);
 
   useEffect(() => {
-    // When a dock is provided, initialize the selected zones
+    // When a dock is provided, initialize the selected transport types
     if (dock) {
-      setSelectedZoneIds(new Set(dock.available_zones.map(z => z.id)));
+      setSelectedTransportTypeIds(new Set(dock.available_transport_types.map(t => t.id)));
     }
   }, [dock]);
 
@@ -46,21 +47,21 @@ const DockAssociationsModal: React.FC<DockAssociationsModalProps> = ({ isOpen, o
     return null;
   }
 
-  const handleCheckboxChange = (zoneId: number) => {
-    const newSelection = new Set(selectedZoneIds);
-    if (newSelection.has(zoneId)) {
-      newSelection.delete(zoneId);
+  const handleCheckboxChange = (transportTypeId: number) => {
+    const newSelection = new Set(selectedTransportTypeIds);
+    if (newSelection.has(transportTypeId)) {
+      newSelection.delete(transportTypeId);
     } else {
-      newSelection.add(zoneId);
+      newSelection.add(transportTypeId);
     }
-    setSelectedZoneIds(newSelection);
+    setSelectedTransportTypeIds(newSelection);
   };
 
   const handleSave = () => {
-    onSave(dock.id, Array.from(selectedZoneIds));
+    onSave(dock.id, Array.from(selectedTransportTypeIds));
   };
   
-  // Basic modal styling
+  // Basic modal styling (re-used from other modals)
   const modalStyle: React.CSSProperties = {
     position: 'fixed',
     top: '50%',
@@ -105,24 +106,24 @@ const DockAssociationsModal: React.FC<DockAssociationsModalProps> = ({ isOpen, o
       <div style={backdropStyle} onClick={onClose} />
       <div style={modalStyle}>
         <div style={headerStyle}>
-          <h3>Привязка зон для дока: {dock.name}</h3>
+          <h3>Привязка типов перевозок для дока: {dock.name}</h3>
         </div>
         <div style={listStyle}>
-          {allZones.length > 0 ? (
-            allZones.map(zone => (
-              <div key={zone.id}>
+          {allTransportTypes.length > 0 ? (
+            allTransportTypes.map(tt => (
+              <div key={tt.id}>
                 <label>
                   <input
                     type="checkbox"
-                    checked={selectedZoneIds.has(zone.id)}
-                    onChange={() => handleCheckboxChange(zone.id)}
+                    checked={selectedTransportTypeIds.has(tt.id)}
+                    onChange={() => handleCheckboxChange(tt.id)}
                   />
-                  {zone.name}
+                  {tt.name}
                 </label>
               </div>
             ))
           ) : (
-            <p>Загрузка зон...</p>
+            <p>Загрузка типов перевозок...</p>
           )}
         </div>
         <div style={buttonContainerStyle}>
@@ -134,4 +135,4 @@ const DockAssociationsModal: React.FC<DockAssociationsModalProps> = ({ isOpen, o
   );
 };
 
-export default DockAssociationsModal;
+export default DockTransportTypeAssociationsModal;

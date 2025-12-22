@@ -1,6 +1,8 @@
 // Test comment
 import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
+import DockAssociationsModal from '../components/DockAssociationsModal'
+import DockTransportTypeAssociationsModal from '../components/DockTransportTypeAssociationsModal'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -21,7 +23,7 @@ interface TransportType {
     name: string
 }
 
-interface Dock {
+export interface Dock {
   id?: number
   name: string
   status: DockStatus
@@ -37,16 +39,26 @@ interface Dock {
 
 const emptyDock: Dock = { name: '', status: 'active', length_meters: null, width_meters: null, max_load_kg: null, object_id: 0, object: {id: 0, name: ''}, dock_type: 'universal', available_zones: [], available_transport_types: [] }
 
+const dockTypeTranslation = {
+  universal: 'Универсальный',
+  entrance: 'Вход',
+  exit: 'Выход',
+};
+
 const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [items, setItems] = useState<Dock[]>([])
   const [objects, setObjects] = useState<Object[]>([])
-  const [zones, setZones] = useState<Zone[]>([])
-  const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
   const [form, setForm] = useState<Dock>({ ...emptyDock })
   const [editingId, setEditingId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  
+  // State for the new modal
+  const [isZoneModalOpen, setZoneModalOpen] = useState(false)
+  const [isTransportTypeModalOpen, setTransportTypeModalOpen] = useState(false)
+  const [selectedDock, setSelectedDock] = useState<Dock | null>(null)
+
 
   const token = useMemo(() => localStorage.getItem('token'), [])
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
@@ -77,7 +89,9 @@ const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const create = async () => {
     setError(null); setSuccess(null)
     try {
-      await axios.post(`${API_BASE}/api/docks/`, form, { headers })
+      // NOTE: available_zone_ids are now managed separately
+      const payload = { ...form, available_zone_ids: [], available_transport_type_ids: [] };
+      await axios.post(`${API_BASE}/api/docks/`, payload, { headers })
       setSuccess('Док создан')
       resetForm()
       load()
@@ -88,18 +102,16 @@ const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   const startEdit = (d: Dock) => {
     setEditingId(d.id!)
-    setForm({ ...d })
+    // We don't need to load zones into the main form anymore
+    setForm({ ...d, available_zones: [], available_transport_types: [] })
   }
 
   const update = async () => {
     if (!editingId) return
     setError(null); setSuccess(null)
     try {
-        const payload = {
-            ...form,
-            available_zone_ids: form.available_zones.map(z => z.id),
-            available_transport_type_ids: form.available_transport_types.map(t => t.id),
-        }
+      // available_zone_ids are no longer part of the main update payload
+      const payload = { ...form, available_zone_ids: undefined, available_transport_type_ids: undefined };
       await axios.put(`${API_BASE}/api/docks/${editingId}`, payload, { headers })
       setSuccess('Док обновлён')
       resetForm()
@@ -121,17 +133,52 @@ const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     }
   }
 
-  const handleZoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedIds = Array.from(e.target.selectedOptions, option => Number(option.value));
-    const selectedZones = zones.filter(z => selectedIds.includes(z.id));
-    setForm({ ...form, available_zones: selectedZones });
+  // --- Handlers for the new modal ---
+  const openZoneModal = (dock: Dock) => {
+    setSelectedDock(dock);
+    setZoneModalOpen(true);
   };
 
-  const handleTransportTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedIds = Array.from(e.target.selectedOptions, option => Number(option.value));
-    const selectedTransportTypes = transportTypes.filter(t => selectedIds.includes(t.id));
-    setForm({ ...form, available_transport_types: selectedTransportTypes });
+  const closeZoneModal = () => {
+    setSelectedDock(null);
+    setZoneModalOpen(false);
   };
+
+  const handleSaveZones = async (dockId: number, zoneIds: number[]) => {
+    setError(null); setSuccess(null);
+    try {
+      await axios.put(`${API_BASE}/api/docks/${dockId}/zones`, { zone_ids: zoneIds }, { headers });
+      setSuccess('Привязки зон успешно обновлены');
+      closeZoneModal();
+      load(); // Reload data to show changes
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Ошибка обновления зон');
+    }
+  };
+
+  // --- Handlers for the Transport Type modal ---
+  const openTransportTypeModal = (dock: Dock) => {
+    setSelectedDock(dock);
+    setTransportTypeModalOpen(true);
+  };
+
+  const closeTransportTypeModal = () => {
+    setSelectedDock(null);
+    setTransportTypeModalOpen(false);
+  };
+
+  const handleSaveTransportTypes = async (dockId: number, transportTypeIds: number[]) => {
+    setError(null); setSuccess(null);
+    try {
+      await axios.put(`${API_BASE}/api/docks/${dockId}/transport-types`, { transport_type_ids: transportTypeIds }, { headers });
+      setSuccess('Привязки типов перевозок успешно обновлены');
+      closeTransportTypeModal();
+      load(); // Reload data to show changes
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Ошибка обновления типов перевозок');
+    }
+  };
+
 
   return (
     <div style={{ padding: 16 }}>
@@ -182,9 +229,6 @@ const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Статус</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Доступные зоны</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Доступные типы перевозок</th>
-              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Длина, м</th>
-              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Ширина, м</th>
-              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Макс. нагрузка, кг</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}></th>
             </tr>
           </thead>
@@ -193,13 +237,17 @@ const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               <tr key={d.id}>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.name}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.object?.name}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.dock_type}</td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{dockTypeTranslation[d.dock_type]}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.status}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.available_zones.map(z => z.name).join(', ')}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.available_transport_types.map(t => t.name).join(', ')}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.length_meters ?? ''}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.width_meters ?? ''}</td>
-                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.max_load_kg ?? ''}</td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
+                  {d.available_zones.map(z => z.name).join(', ')}
+                  {d.available_zones.length > 0 && <span style={{ marginLeft: '8px' }}></span>}
+                  <button onClick={() => openZoneModal(d)} style={{ marginLeft: '8px', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>Управление</button>
+                </td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
+                  {d.available_transport_types.map(t => t.name).join(', ')}
+                  <button onClick={() => openTransportTypeModal(d)} style={{ marginLeft: '8px', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>Управление</button>
+                </td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
                   <button onClick={() => startEdit(d)}>Изменить</button>
                   <button onClick={() => remove(d.id!)} style={{ marginLeft: 8 }}>Удалить</button>
@@ -209,6 +257,18 @@ const AdminDocks: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           </tbody>
         </table>
       </div>
+      <DockAssociationsModal
+        isOpen={isZoneModalOpen}
+        onClose={closeZoneModal}
+        onSave={handleSaveZones}
+        dock={selectedDock}
+      />
+      <DockTransportTypeAssociationsModal
+        isOpen={isTransportTypeModalOpen}
+        onClose={closeTransportTypeModal}
+        onSave={handleSaveTransportTypes}
+        dock={selectedDock}
+      />
     </div>
   )
 }
