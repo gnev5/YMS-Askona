@@ -408,6 +408,7 @@ const CalendarView: React.FC<{ goToPage: (p: Page) => void }> = ({ goToPage }) =
         }}
         selectedSlot={selectedSlot}
         onBookingSuccess={handleBookingSuccess}
+        selectedObject={null}
       />
     </div>
   )

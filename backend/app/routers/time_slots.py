@@ -103,11 +103,13 @@ def get_time_slots_journal(
     end_date: Optional[date] = Query(None, description="Конечная дата фильтрации"),
     dock_id: Optional[int] = Query(None, description="ID дока для фильтрации"),
     is_available: Optional[bool] = Query(None, description="Фильтр по доступности"),
+    object_id: Optional[int] = Query(None, description="ID объекта"),
+    dock_type: Optional[str] = Query(None, description="Тип дока: entrance/exit/universal"),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin)
 ):
     """Журнал временных слотов с возможностью фильтрации"""
-    query = db.query(models.TimeSlot)
+    query = db.query(models.TimeSlot).join(models.Dock)
     
     if start_date:
         query = query.filter(models.TimeSlot.slot_date >= start_date)
@@ -117,6 +119,14 @@ def get_time_slots_journal(
         query = query.filter(models.TimeSlot.dock_id == dock_id)
     if is_available is not None:
         query = query.filter(models.TimeSlot.is_available == is_available)
+    if object_id:
+        query = query.filter(models.Dock.object_id == object_id)
+    if dock_type:
+        try:
+            dock_type_enum = models.DockType(dock_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dock_type")
+        query = query.filter(models.Dock.dock_type == dock_type_enum)
     
     slots = query.order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
     

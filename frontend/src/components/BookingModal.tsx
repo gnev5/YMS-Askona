@@ -52,9 +52,19 @@ interface BookingModalProps {
   selectedSlot: { start: Date; end: Date; slotId: number; availableDocks?: number[] } | null
   onBookingSuccess: () => void
   selectedObject: number | null
+  prefillSupplierId?: number | null
+  prefillTransportTypeId?: number | null
 }
 
-const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSlot, onBookingSuccess, selectedObject }) => {
+const BookingModal: React.FC<BookingModalProps> = ({
+  isOpen,
+  onClose,
+  selectedSlot,
+  onBookingSuccess,
+  selectedObject,
+  prefillSupplierId,
+  prefillTransportTypeId,
+}) => {
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
   const [zones, setZones] = useState<Zone[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -95,18 +105,38 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
           vehicle_type_id: 0,
           booking_date: format(selectedSlot.start, 'yyyy-MM-dd'),
           start_time: format(selectedSlot.start, 'HH:mm'),
-          supplier_id: undefined,
-          transport_type_id: undefined,
+          supplier_id: prefillSupplierId ?? undefined,
+          transport_type_id: prefillTransportTypeId ?? undefined,
           cubes: undefined,
           transport_sheet: ''
         })
+        // supplier/transport values may be prefetched; adjust when data arrives
         setSelectedSupplier(null)
         setSupplierSearch('')
         setFilteredSuppliers([])
         setDuration(null)
       }
     }
-  }, [isOpen, selectedSlot])
+  }, [isOpen, selectedSlot, prefillSupplierId, prefillTransportTypeId])
+
+  useEffect(() => {
+    if (!isOpen) return
+    if (prefillSupplierId && suppliers.length > 0) {
+      const supplier = suppliers.find(s => s.id === prefillSupplierId)
+      if (supplier) {
+        setSelectedSupplier(supplier)
+        setSupplierSearch(supplier.name)
+        setForm(prev => ({ ...prev, supplier_id: supplier.id }))
+      }
+    }
+  }, [isOpen, prefillSupplierId, suppliers])
+
+  useEffect(() => {
+    if (!isOpen) return
+    if (prefillTransportTypeId && transportTypes.length > 0) {
+      setForm(prev => ({ ...prev, transport_type_id: prefillTransportTypeId }))
+    }
+  }, [isOpen, prefillTransportTypeId, transportTypes])
 
   useEffect(() => {
     const fetchDuration = async () => {
@@ -296,7 +326,6 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
                 value={form.vehicle_plate}
                 onChange={e => setForm({ ...form, vehicle_plate: e.target.value })}
                 placeholder="A123BC77"
-                required
               />
             </div>
 
@@ -307,7 +336,6 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
                 value={form.driver_full_name}
                 onChange={e => setForm({ ...form, driver_full_name: e.target.value })}
                 placeholder="ФИО полностью"
-                required
               />
             </div>
 
@@ -318,7 +346,6 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
                 value={form.driver_phone}
                 onChange={e => setForm({ ...form, driver_phone: e.target.value })}
                 placeholder="+7 (999) 123-45-67"
-                required
               />
             </div>
 
@@ -401,12 +428,12 @@ const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, selectedSl
             </div>
 
             <div className="field">
-              <label>Транспортная накладная</label>
+              <label>Транспортный лист</label>
               <input
                 type="text"
                 value={form.transport_sheet || ''}
                 onChange={e => setForm({ ...form, transport_sheet: e.target.value })}
-                placeholder="Номер накладной"
+                placeholder="Номер листа"
                 maxLength={20}
               />
             </div>

@@ -51,6 +51,8 @@ class ObjectBase(BaseModel):
     name: str
     object_type: str
     address: Optional[str] = None
+    capacity_in: Optional[int] = None
+    capacity_out: Optional[int] = None
 
 class ObjectCreate(ObjectBase):
     pass
@@ -59,6 +61,8 @@ class ObjectUpdate(ObjectBase):
     name: Optional[str] = None
     object_type: Optional[str] = None
     address: Optional[str] = None
+    capacity_in: Optional[int] = None
+    capacity_out: Optional[int] = None
 
 class Object(ObjectBase):
     id: int
@@ -184,9 +188,9 @@ class TimeSlotCreate(BaseModel):
 
 # Booking schemas
 class BookingBase(BaseModel):
-    vehicle_plate: str
-    driver_full_name: str
-    driver_phone: str
+    vehicle_plate: Optional[str] = None
+    driver_full_name: Optional[str] = None
+    driver_phone: Optional[str] = None
     vehicle_type_id: int
 
 class BookingCreate(BookingBase):

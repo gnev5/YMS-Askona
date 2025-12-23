@@ -10,9 +10,11 @@ interface Object {
   name: string
   object_type: ObjectType
   address?: string | null
+  capacity_in?: number | null
+  capacity_out?: number | null
 }
 
-const emptyObject: Object = { name: '', object_type: 'warehouse', address: null }
+const emptyObject: Object = { name: '', object_type: 'warehouse', address: null, capacity_in: null, capacity_out: null }
 
 const AdminObjects: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [items, setItems] = useState<Object[]>([])
@@ -91,7 +93,7 @@ const AdminObjects: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       {success && <div style={{ color: '#16a34a', marginBottom: 8 }}>{success}</div>}
 
       <h3>Новый объект / Редактирование</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, alignItems: 'center', marginBottom: 16 }}>
         <input placeholder="Название" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
         <select value={form.object_type} onChange={e => setForm({ ...form, object_type: e.target.value as ObjectType })}>
           <option value="warehouse">Склад</option>
@@ -101,6 +103,8 @@ const AdminObjects: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           <option value="other">Прочее</option>
         </select>
         <input placeholder="Адрес" value={form.address ?? ''} onChange={e => setForm({ ...form, address: e.target.value })} />
+        <input placeholder="Пропускная (вход)" type="number" min="0" value={form.capacity_in ?? ''} onChange={e => setForm({ ...form, capacity_in: e.target.value === '' ? null : Number(e.target.value) })} />
+        <input placeholder="Пропускная (выход)" type="number" min="0" value={form.capacity_out ?? ''} onChange={e => setForm({ ...form, capacity_out: e.target.value === '' ? null : Number(e.target.value) })} />
         {editingId ? (
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={update}>Сохранить</button>
@@ -119,6 +123,8 @@ const AdminObjects: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Название</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Тип</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Адрес</th>
+              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Пропускная вход</th>
+              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Пропускная выход</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}></th>
             </tr>
           </thead>
@@ -128,6 +134,8 @@ const AdminObjects: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.name}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.object_type}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.address ?? ''}</td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.capacity_in ?? '—'}</td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{d.capacity_out ?? '—'}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
                   <button onClick={() => startEdit(d)}>Изменить</button>
                   <button onClick={() => remove(d.id!)} style={{ marginLeft: 8 }}>Удалить</button>

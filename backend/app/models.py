@@ -44,6 +44,8 @@ class Object(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     object_type: Mapped[ObjectType] = mapped_column(Enum(ObjectType), nullable=False)
     address: Mapped[str] = mapped_column(String(255), nullable=True)
+    capacity_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    capacity_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     docks: Mapped[list["Dock"]] = relationship("Dock", back_populates="object")
     prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="object")

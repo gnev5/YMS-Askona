@@ -27,6 +27,11 @@ interface Supplier {
     name: string;
 }
 
+interface Dock {
+  id: number
+  name: string
+}
+
 interface TimeSlot {
   id: number
   day_of_week: number
@@ -45,6 +50,7 @@ interface EventItem {
   end: Date
   resource: TimeSlot
   availableDocks?: number[]
+  resourceId?: number
 }
 
 
@@ -54,6 +60,7 @@ import BookingModal from '../components/BookingModal';
 const BookingIn: React.FC = () => {
     const [objects, setObjects] = useState<Object[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+    const [docks, setDocks] = useState<Dock[]>([]);
     const [selectedObject, setSelectedObject] = useState<number | null>(null);
     const [selectedSupplier, setSelectedSupplier] = useState<number | null>(null);
     const [events, setEvents] = useState<EventItem[]>([]);
@@ -76,92 +83,125 @@ const BookingIn: React.FC = () => {
             setSuppliers(data);
         };
 
+        const fetchDocks = async () => {
+            const { data } = await axios.get<Dock[]>(`${API_BASE}/api/docks/`);
+            setDocks(data);
+        };
+
         fetchObjects();
         fetchSuppliers();
+        fetchDocks();
     }, []);
 
-    const handleSearch = async () => {
+    const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
         if (!selectedObject || !selectedSupplier) {
             alert('Пожалуйста, выберите объект и поставщика');
             return;
         }
-        
-        const from = format(range.start, 'yyyy-MM-dd');
-        const to = format(range.end, 'yyyy-MM-dd');
+
+        const currentRange = rangeOverride || range;
+        const viewMode = viewOverride || currentView;
+        const from = format(currentRange.start, 'yyyy-MM-dd');
+        const to = format(currentRange.end, 'yyyy-MM-dd');
         const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&supplier_id=${selectedSupplier}&booking_type=in`);
         const evts: EventItem[] = [];
 
-        for (let d = new Date(range.start); d <= range.end; d = new Date(d.getTime() + 86400000)) {
+        for (let d = new Date(currentRange.start); d <= currentRange.end; d = new Date(d.getTime() + 86400000)) {
             const dow = d.getDay() === 0 ? 6 : d.getDay() - 1;
             const daySlots = data.filter(s => s.day_of_week === dow);
 
-            const slotGroups = new Map<string, TimeSlot[]>();
+            if (viewMode === 'day') {
+                daySlots.forEach(slot => {
+                    const [sh, sm] = slot.start_time.split(':').map(Number);
+                    const [eh, em] = slot.end_time.split(':').map(Number);
+                    const start = new Date(d);
+                    start.setHours(sh, sm, 0, 0);
+                    const end = new Date(d);
+                    end.setHours(eh, em, 0, 0);
 
-            daySlots.forEach(slot => {
-                const timeKey = `${slot.start_time}-${slot.end_time}`;
-                if (!slotGroups.has(timeKey)) {
-                    slotGroups.set(timeKey, []);
-                }
-                slotGroups.get(timeKey)!.push(slot);
-            });
+                    const title = `${slot.occupancy}/${slot.capacity}`;
 
-            slotGroups.forEach((slots, timeKey) => {
-                if (slots.length === 0) return;
-
-                const [sh, sm] = slots[0].start_time.split(':').map(Number);
-                const [eh, em] = slots[0].end_time.split(':').map(Number);
-                const start = new Date(d);
-                start.setHours(sh, sm, 0, 0);
-                const end = new Date(d);
-                end.setHours(eh, em, 0, 0);
-
-                const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0);
-                const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0);
-
-                let status: 'free' | 'partial' | 'full' = 'free';
-                if (totalOccupancy === 0) {
-                    status = 'free';
-                } else if (totalOccupancy < totalCapacity) {
-                    status = 'partial';
-                } else {
-                    status = 'full';
-                }
-
-                const title = `${totalOccupancy}/${totalCapacity}`;
-
-                const combinedResource: TimeSlot = {
-                    id: slots[0].id,
-                    day_of_week: slots[0].day_of_week,
-                    start_time: slots[0].start_time,
-                    end_time: slots[0].end_time,
-                    capacity: totalCapacity,
-                    occupancy: totalOccupancy,
-                    status,
-                };
-
-                const availableDocks = slots
-                    .filter(slot => slot.occupancy < slot.capacity)
-                    .map(slot => slot.dock_id)
-                    .filter((id): id is number => typeof id === 'number');
-
-                evts.push({
-                    id: `combined-${timeKey}-${d.toDateString()}`,
-                    title,
-                    start,
-                    end,
-                    resource: combinedResource,
-                    availableDocks
+                    evts.push({
+                        id: `slot-${slot.id}-${d.toDateString()}`,
+                        title,
+                        start,
+                        end,
+                        resource: slot,
+                        availableDocks: slot.dock_id ? [slot.dock_id] : [],
+                        resourceId: slot.dock_id,
+                    });
                 });
-            });
+            } else {
+                const slotGroups = new Map<string, TimeSlot[]>();
+                daySlots.forEach(slot => {
+                    const timeKey = `${slot.start_time}-${slot.end_time}`;
+                    if (!slotGroups.has(timeKey)) {
+                        slotGroups.set(timeKey, []);
+                    }
+                    slotGroups.get(timeKey)!.push(slot);
+                });
+
+                slotGroups.forEach((slots, timeKey) => {
+                    if (slots.length === 0) return;
+
+                    const [sh, sm] = slots[0].start_time.split(':').map(Number);
+                    const [eh, em] = slots[0].end_time.split(':').map(Number);
+                    const start = new Date(d);
+                    start.setHours(sh, sm, 0, 0);
+                    const end = new Date(d);
+                    end.setHours(eh, em, 0, 0);
+
+                    const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0);
+                    const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0);
+
+                    let status: 'free' | 'partial' | 'full' = 'free';
+                    if (totalOccupancy === 0) {
+                        status = 'free';
+                    } else if (totalOccupancy < totalCapacity) {
+                        status = 'partial';
+                    } else {
+                        status = 'full';
+                    }
+
+                    const title = `${totalOccupancy}/${totalCapacity}`;
+
+                    const combinedResource: TimeSlot = {
+                        id: slots[0].id,
+                        day_of_week: slots[0].day_of_week,
+                        start_time: slots[0].start_time,
+                        end_time: slots[0].end_time,
+                        capacity: totalCapacity,
+                        occupancy: totalOccupancy,
+                        status,
+                    };
+
+                    const availableDocks = slots
+                        .filter(slot => slot.occupancy < slot.capacity)
+                        .map(slot => slot.dock_id)
+                        .filter((id): id is number => typeof id === 'number');
+
+                    evts.push({
+                        id: `combined-${timeKey}-${d.toDateString()}`,
+                        title,
+                        start,
+                        end,
+                        resource: combinedResource,
+                        availableDocks,
+                    });
+                });
+            }
         }
         setEvents(evts);
     };
 
     const onSelectSlot = (slotInfo: SlotInfo) => {
-        const match = events.find(e => e.start.getTime() === slotInfo.start.getTime() && e.end.getTime() === slotInfo.end.getTime());
-        if (match) {
-            openModalForEvent(match);
-        }
+        // Prefer selection on event; slot selection may have collisions, so use event match by start/end/resource if present
+        const match = events.find(e => 
+            e.start.getTime() === slotInfo.start.getTime() && 
+            e.end.getTime() === slotInfo.end.getTime() &&
+            (!slotInfo.resourceId || e.resourceId === slotInfo.resourceId)
+        );
+        if (match) openModalForEvent(match);
     };
 
     const openModalForEvent = (evt: EventItem) => {
@@ -181,6 +221,21 @@ const BookingIn: React.FC = () => {
 
     const goToDate = (date: Date) => {
         setCurrentDate(date);
+    };
+
+    const onRangeChange = (r: any) => {
+        if (Array.isArray(r) && r.length) {
+            setRange({ start: r[0], end: r[r.length - 1] });
+            if (selectedObject && selectedSupplier) handleSearch({ start: r[0], end: r[r.length - 1] }, currentView);
+        } else if (r?.start && r?.end) {
+            setRange({ start: r.start, end: r.end });
+            if (selectedObject && selectedSupplier) handleSearch({ start: r.start, end: r.end }, currentView);
+        }
+    };
+
+    const onViewChange = (v: View) => {
+        setCurrentView(v);
+        if (selectedObject && selectedSupplier) handleSearch(range, v);
     };
 
     const dayPropGetter = (date: Date) => {
@@ -282,6 +337,11 @@ const BookingIn: React.FC = () => {
                     onNavigate={(newDate) => setCurrentDate(newDate)}
                     onSelectSlot={onSelectSlot}
                     onSelectEvent={openModalForEvent as any}
+                    onRangeChange={onRangeChange as any}
+                    onView={onViewChange as any}
+                    resources={currentView === 'day' ? docks : undefined}
+                    resourceIdAccessor="id"
+                    resourceTitleAccessor="name"
                     dayPropGetter={dayPropGetter}
                     eventPropGetter={eventPropGetter}
                     culture="ru"
@@ -289,16 +349,17 @@ const BookingIn: React.FC = () => {
             </div>
             <BookingModal
                 isOpen={isModalOpen}
-                onClose={() => {
-                    setIsModalOpen(false);
-                    setSelectedSlot(null);
-                }}
-                selectedSlot={selectedSlot}
-                onBookingSuccess={handleBookingSuccess}
-                selectedObject={selectedObject}
-            />
-        </div>
-    );
+            onClose={() => {
+                setIsModalOpen(false);
+                setSelectedSlot(null);
+            }}
+            selectedSlot={selectedSlot}
+            onBookingSuccess={handleBookingSuccess}
+            selectedObject={selectedObject}
+            prefillSupplierId={selectedSupplier}
+        />
+    </div>
+);
 };
 
 export default BookingIn;

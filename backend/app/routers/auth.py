@@ -19,7 +19,8 @@ def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="User already exists")
 
     try:
-        role = models.UserRole(user_in.role) if user_in.role else models.UserRole.user
+        role_value = user_in.role or models.UserRole.carrier.value
+        role = models.UserRole(role_value)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid role value")
 

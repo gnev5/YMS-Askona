@@ -22,6 +22,22 @@ interface Dock {
   name: string
 }
 
+interface ObjectItem {
+  id: number
+  name: string
+}
+
+const formatDate = (d: Date) => d.toISOString().slice(0, 10)
+const getCurrentWeekRange = () => {
+  const today = new Date()
+  const dayOfWeek = (today.getDay() + 6) % 7 // Monday = 0
+  const start = new Date(today)
+  start.setDate(today.getDate() - dayOfWeek)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return { start: formatDate(start), end: formatDate(end) }
+}
+
 interface TimeSlotForm {
   dock_id: number
   slot_date: string
@@ -32,8 +48,10 @@ interface TimeSlotForm {
 }
 
 const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+  const weekRange = getCurrentWeekRange()
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([])
   const [docks, setDocks] = useState<Dock[]>([])
+  const [objects, setObjects] = useState<ObjectItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -50,10 +68,12 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   
   // Фильтры
   const [filters, setFilters] = useState({
-    start_date: '',
-    end_date: '',
+    start_date: weekRange.start,
+    end_date: weekRange.end,
     dock_id: '',
-    is_available: ''
+    is_available: '',
+    object_id: '',
+    dock_type: ''
   })
 
   const token = useMemo(() => localStorage.getItem('token'), [])
@@ -71,6 +91,15 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     }
   }
 
+  const loadObjects = async () => {
+    try {
+      const { data } = await axios.get<ObjectItem[]>(`${API_BASE}/api/objects/`)
+      setObjects(data)
+    } catch (_e: any) {
+      // ignore silently
+    }
+  }
+
   const loadTimeSlots = async () => {
     setLoading(true)
     setError(null)
@@ -80,6 +109,8 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       if (filters.end_date) params.append('end_date', filters.end_date)
       if (filters.dock_id) params.append('dock_id', filters.dock_id)
       if (filters.is_available !== '') params.append('is_available', filters.is_available)
+      if (filters.object_id) params.append('object_id', filters.object_id)
+      if (filters.dock_type) params.append('dock_type', filters.dock_type)
 
       const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots/journal?${params.toString()}`, { headers })
       setTimeSlots(data)
@@ -92,6 +123,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   useEffect(() => {
     loadDocks()
+    loadObjects()
   }, [])
 
   useEffect(() => {
@@ -351,6 +383,32 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               {docks.map(dock => (
                 <option key={dock.id} value={dock.id.toString()}>{dock.name}</option>
               ))}
+            </select>
+          </div>
+          <div>
+            <label>Объект:</label>
+            <select 
+              value={filters.object_id}
+              onChange={e => setFilters(prev => ({ ...prev, object_id: e.target.value }))}
+              style={{ width: '100%', padding: 8, marginTop: 4 }}
+            >
+              <option value="">Все объекты</option>
+              {objects.map(obj => (
+                <option key={obj.id} value={obj.id.toString()}>{obj.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label>Тип дока:</label>
+            <select 
+              value={filters.dock_type}
+              onChange={e => setFilters(prev => ({ ...prev, dock_type: e.target.value }))}
+              style={{ width: '100%', padding: 8, marginTop: 4 }}
+            >
+              <option value="">Все</option>
+              <option value="entrance">Вход</option>
+              <option value="exit">Выход</option>
+              <option value="universal">Универсальный</option>
             </select>
           </div>
           <div>

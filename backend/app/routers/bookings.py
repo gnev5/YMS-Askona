@@ -56,12 +56,21 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         if slot.dock_id not in slots_by_dock:
             slots_by_dock[slot.dock_id] = []
         slots_by_dock[slot.dock_id].append(slot)
+
+    dock_ids = list(slots_by_dock.keys())
+    docks = db.query(models.Dock).filter(models.Dock.id.in_(dock_ids)).all() if dock_ids else []
+    dock_map = {d.id: d for d in docks}
+    object_ids = {d.object_id for d in docks}
+    objects = db.query(models.Object).filter(models.Object.id.in_(object_ids)).all() if object_ids else []
+    object_map = {o.id: o for o in objects}
     
     # Ищем подходящую цепочку слотов
     chosen_slots = None
     for dock_id, dock_slots in slots_by_dock.items():
         # Сортируем слоты по времени
         dock_slots.sort(key=lambda x: x.start_time)
+        dock = dock_map.get(dock_id)
+        obj = object_map.get(dock.object_id) if dock else None
         
         # Ищем непрерывную цепочку нужной длины
         for i in range(len(dock_slots) - required_slots + 1):
@@ -79,6 +88,44 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
             if not is_continuous:
                 continue
             
+            # Проверяем лимиты пропускной способности объекта по направлению
+            if dock and obj:
+                limits_to_check = []
+                if dock.dock_type == models.DockType.entrance:
+                    limits_to_check.append(("in", obj.capacity_in, [models.DockType.entrance, models.DockType.universal]))
+                elif dock.dock_type == models.DockType.exit:
+                    limits_to_check.append(("out", obj.capacity_out, [models.DockType.exit, models.DockType.universal]))
+                else:  # universal -> проверяем оба лимита, если заданы
+                    limits_to_check.append(("in", obj.capacity_in, [models.DockType.entrance, models.DockType.universal]))
+                    limits_to_check.append(("out", obj.capacity_out, [models.DockType.exit, models.DockType.universal]))
+
+                capacity_block = False
+                for _, cap_limit, types_to_use in limits_to_check:
+                    if not cap_limit or cap_limit <= 0:
+                        continue
+                    for slot in chain:
+                        occupancy_obj = db.query(func.count(models.BookingTimeSlot.id)).join(
+                            models.TimeSlot, models.BookingTimeSlot.time_slot_id == models.TimeSlot.id
+                        ).join(
+                            models.Dock, models.TimeSlot.dock_id == models.Dock.id
+                        ).join(
+                            models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id
+                        ).filter(
+                            models.Dock.object_id == obj.id,
+                            models.Dock.dock_type.in_(types_to_use),
+                            models.TimeSlot.slot_date == slot.slot_date,
+                            models.TimeSlot.start_time == slot.start_time,
+                            models.TimeSlot.end_time == slot.end_time,
+                            models.Booking.status == "confirmed"
+                        ).scalar() or 0
+                        if occupancy_obj >= cap_limit:
+                            capacity_block = True
+                            break
+                    if capacity_block:
+                        break
+                if capacity_block:
+                    continue
+
             # Проверяем доступность всех слотов в цепочке
             all_available = True
             for slot in chain:
@@ -108,9 +155,9 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     new_booking = models.Booking(
         user_id=current_user.id,
         vehicle_type_id=booking.vehicle_type_id,
-        vehicle_plate=booking.vehicle_plate,
-        driver_full_name=booking.driver_full_name,
-        driver_phone=booking.driver_phone,
+        vehicle_plate=booking.vehicle_plate or "",
+        driver_full_name=booking.driver_full_name or "",
+        driver_phone=booking.driver_phone or "",
         status="confirmed",
         supplier_id=booking.supplier_id,
         zone_id=booking.zone_id,
