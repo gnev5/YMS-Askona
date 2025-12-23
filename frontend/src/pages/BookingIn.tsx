@@ -91,11 +91,32 @@ const BookingIn: React.FC = () => {
         fetchObjects();
         fetchSuppliers();
         fetchDocks();
+
+        const savedObject = localStorage.getItem('selectedObject');
+        const savedSupplier = localStorage.getItem('selectedSupplier');
+        if (savedObject) {
+            setSelectedObject(Number(savedObject));
+        }
+        if (savedSupplier) {
+            setSelectedSupplier(Number(savedSupplier));
+        }
     }, []);
+
+    useEffect(() => {
+        if (selectedObject) {
+            localStorage.setItem('selectedObject', String(selectedObject));
+        }
+        if (selectedSupplier) {
+            localStorage.setItem('selectedSupplier', String(selectedSupplier));
+        }
+        if (selectedObject && selectedSupplier) {
+            handleSearch();
+        }
+    }, [selectedObject, selectedSupplier]);
 
     const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
         if (!selectedObject || !selectedSupplier) {
-            alert('Пожалуйста, выберите объект и поставщика');
+            // Do not show an alert, just don't search
             return;
         }
 
@@ -216,7 +237,9 @@ const BookingIn: React.FC = () => {
     };
 
     const handleBookingSuccess = () => {
-        handleSearch();
+        if (selectedObject && selectedSupplier) {
+            handleSearch();
+        }
     };
 
     const goToDate = (date: Date) => {
@@ -310,7 +333,6 @@ const BookingIn: React.FC = () => {
                         ))}
                     </select>
                 </div>
-                <button onClick={handleSearch}>Запланировать поставку</button>
             </div>
 
             <div className="inline-actions" style={{ marginTop: 12 }}>
