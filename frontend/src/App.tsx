@@ -19,6 +19,7 @@ import AdminObjects from './pages/AdminObjects'
 import Analytics from './pages/Analytics'
 import BookingIn from './pages/BookingIn'
 import BookingOut from './pages/BookingOut'
+import AdminPrrLimits from './pages/AdminPrrLimits'
 
 type Page =
   | 'calendar'
@@ -35,6 +36,7 @@ type Page =
   | 'booking-in'
   | 'booking-out'
   | 'admin-objects'
+  | 'admin-prr-limits'
 
 const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, children?: {id: Page, label: string}[] }[] = [
   { id: 'calendar', label: 'Календарь', icon: 'calendar_today' },
@@ -53,6 +55,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, child
   { id: 'admin-docks', label: 'Доки', icon: 'door_sliding', admin: true },
   { id: 'admin-objects', label: 'Объекты', icon: 'apartment', admin: true },
   { id: 'admin-vehicle-types', label: 'Типы ТС', icon: 'rv_hookup', admin: true },
+  { id: 'admin-prr-limits', label: 'Лимиты ПРР', icon: 'timer', admin: true },
   { id: 'admin-zones', label: 'Зоны', icon: 'layers', admin: true },
   { id: 'admin-suppliers', label: 'Поставщики', icon: 'factory', admin: true },
   { id: 'admin-transport-types', label: 'Типы перевозки', icon: 'local_shipping', admin: true },
@@ -533,6 +536,8 @@ const App: React.FC = () => {
         return <AdminUsers onBack={() => setPage('calendar')} />
       case 'admin-objects':
         return <AdminObjects onBack={() => setPage('calendar')} />
+      case 'admin-prr-limits':
+        return <AdminPrrLimits onBack={() => setPage('calendar')} />
       case 'analytics':
         return <Analytics onBack={() => setPage('calendar')} />
       case 'booking-in':
