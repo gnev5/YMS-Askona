@@ -178,6 +178,15 @@ class TimeSlotWithOccupancy(TimeSlot):
     occupancy: int
     status: str
 
+class TimeSlotBookingInfo(BaseModel):
+    id: int
+    supplier_name: Optional[str] = None
+    cubes: Optional[float] = None
+    transport_sheet: Optional[str] = None
+
+class TimeSlotWithBookings(TimeSlotWithOccupancy):
+    bookings: List[TimeSlotBookingInfo] = []
+
 class TimeSlotCreate(BaseModel):
     dock_id: int
     slot_date: date
@@ -228,6 +237,10 @@ class BookingWithDetails(BaseModel):
     transport_type_name: Optional[str] = None
     cubes: Optional[float] = None
     transport_sheet: Optional[str] = None
+    object_id: Optional[int] = None
+    object_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_full_name: Optional[str] = None
 
 # Supplier schemas
 class SupplierBase(BaseModel):
@@ -236,10 +249,11 @@ class SupplierBase(BaseModel):
     zone_id: int
 
 class SupplierCreate(SupplierBase):
-    pass
+    vehicle_type_ids: List[int] = []
 
 class Supplier(SupplierBase):
     id: int
+    vehicle_types: List[VehicleType] = []
 
     class Config:
         from_attributes = True
@@ -293,6 +307,9 @@ class BookingWithDetailsUpdated(BookingWithDetails):
     zone_name: Optional[str] = None
     transport_type_name: Optional[str] = None
     cubes: Optional[float] = None
+    transport_sheet: Optional[str] = None
+
+class BookingTransportSheetUpdate(BaseModel):
     transport_sheet: Optional[str] = None
 
 # PrrLimit schemas

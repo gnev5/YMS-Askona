@@ -1,9 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
+
 from ..db import get_db
-from ..models import Supplier, UserSupplier, UserRole
-from ..schemas import Supplier as SupplierSchema, SupplierCreate, SupplierWithZone, UserSupplier as UserSupplierSchema, UserSupplierCreate
+from ..models import Supplier, UserSupplier, UserRole, VehicleType
+from ..schemas import (
+    Supplier as SupplierSchema,
+    SupplierCreate,
+    SupplierWithZone,
+    UserSupplier as UserSupplierSchema,
+    UserSupplierCreate,
+)
 from ..deps import get_current_user
 
 router = APIRouter(prefix="/api/suppliers", tags=["suppliers"])
@@ -11,40 +18,64 @@ router = APIRouter(prefix="/api/suppliers", tags=["suppliers"])
 
 @router.get("/", response_model=List[SupplierWithZone])
 def get_suppliers(db: Session = Depends(get_db)):
-    """Получить всех поставщиков"""
-    return db.query(Supplier).all()
+    return (
+        db.query(Supplier)
+        .options(
+            joinedload(Supplier.zone),
+            joinedload(Supplier.vehicle_types),
+        )
+        .all()
+    )
 
 
 @router.get("/my", response_model=List[SupplierWithZone])
 def get_my_suppliers(
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Получить поставщиков для текущего пользователя
-    Администраторы видят всех поставщиков, обычные пользователи - только привязанных к ним
-    """
-    # Проверяем роль пользователя с использованием enum
     if current_user.role == UserRole.admin:
-        # Администратор видит всех поставщиков
-        return db.query(Supplier).all()
-    else:
-        # Обычный пользователь видит только привязанных к нему поставщиков
-        user_suppliers = db.query(UserSupplier).filter(UserSupplier.user_id == current_user.id).all()
-        supplier_ids = [us.supplier_id for us in user_suppliers]
-        return db.query(Supplier).filter(Supplier.id.in_(supplier_ids)).all()
+        return (
+            db.query(Supplier)
+            .options(
+                joinedload(Supplier.zone),
+                joinedload(Supplier.vehicle_types),
+            )
+            .all()
+        )
+
+    user_suppliers = db.query(UserSupplier).filter(UserSupplier.user_id == current_user.id).all()
+    supplier_ids = [us.supplier_id for us in user_suppliers]
+    return (
+        db.query(Supplier)
+        .options(
+            joinedload(Supplier.zone),
+            joinedload(Supplier.vehicle_types),
+        )
+        .filter(Supplier.id.in_(supplier_ids))
+        .all()
+    )
 
 
 @router.post("/", response_model=SupplierSchema)
 def create_supplier(
     supplier: SupplierCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Создать нового поставщика (только для админов)"""
     if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
-    
-    db_supplier = Supplier(**supplier.dict())
+
+    vehicle_types: list[VehicleType] = []
+    if supplier.vehicle_type_ids:
+        vehicle_types = db.query(VehicleType).filter(VehicleType.id.in_(supplier.vehicle_type_ids)).all()
+        if len(vehicle_types) != len(supplier.vehicle_type_ids):
+            raise HTTPException(status_code=404, detail="One or more vehicle types not found")
+
+    data = supplier.dict()
+    data.pop("vehicle_type_ids", None)
+
+    db_supplier = Supplier(**data)
+    db_supplier.vehicle_types = vehicle_types
     db.add(db_supplier)
     db.commit()
     db.refresh(db_supplier)
@@ -53,10 +84,17 @@ def create_supplier(
 
 @router.get("/{supplier_id}", response_model=SupplierWithZone)
 def get_supplier(supplier_id: int, db: Session = Depends(get_db)):
-    """Получить поставщика по ID"""
-    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    supplier = (
+        db.query(Supplier)
+        .options(
+            joinedload(Supplier.zone),
+            joinedload(Supplier.vehicle_types),
+        )
+        .filter(Supplier.id == supplier_id)
+        .first()
+    )
     if not supplier:
-        raise HTTPException(status_code=404, detail="Поставщик не найден")
+        raise HTTPException(status_code=404, detail="Supplier not found")
     return supplier
 
 
@@ -65,19 +103,29 @@ def update_supplier(
     supplier_id: int,
     supplier: SupplierCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Обновить поставщика (только для админов)"""
     if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
-    
+
     db_supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
     if not db_supplier:
-        raise HTTPException(status_code=404, detail="Поставщик не найден")
-    
-    for key, value in supplier.dict().items():
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    vehicle_types: list[VehicleType] = []
+    if supplier.vehicle_type_ids:
+        vehicle_types = db.query(VehicleType).filter(VehicleType.id.in_(supplier.vehicle_type_ids)).all()
+        if len(vehicle_types) != len(supplier.vehicle_type_ids):
+            raise HTTPException(status_code=404, detail="One or more vehicle types not found")
+
+    data = supplier.dict()
+    data.pop("vehicle_type_ids", None)
+
+    for key, value in data.items():
         setattr(db_supplier, key, value)
-    
+
+    db_supplier.vehicle_types = vehicle_types
+
     db.commit()
     db.refresh(db_supplier)
     return db_supplier
@@ -87,28 +135,33 @@ def update_supplier(
 def delete_supplier(
     supplier_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Удалить поставщика (только для админов)"""
     if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
-    
+
     db_supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
     if not db_supplier:
-        raise HTTPException(status_code=404, detail="Поставщик не найден")
-    
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
     db.delete(db_supplier)
     db.commit()
-    return {"message": "Поставщик удален"}
+    return {"message": "Supplier deleted"}
 
 
-# Управление связями пользователей с поставщиками
 @router.get("/user/{user_id}", response_model=List[SupplierWithZone])
 def get_user_suppliers(user_id: int, db: Session = Depends(get_db)):
-    """Получить поставщиков пользователя"""
     user_suppliers = db.query(UserSupplier).filter(UserSupplier.user_id == user_id).all()
     supplier_ids = [us.supplier_id for us in user_suppliers]
-    return db.query(Supplier).filter(Supplier.id.in_(supplier_ids)).all()
+    return (
+        db.query(Supplier)
+        .options(
+            joinedload(Supplier.zone),
+            joinedload(Supplier.vehicle_types),
+        )
+        .filter(Supplier.id.in_(supplier_ids))
+        .all()
+    )
 
 
 @router.post("/user/{user_id}/supplier/{supplier_id}", response_model=UserSupplierSchema)
@@ -116,25 +169,26 @@ def add_user_supplier(
     user_id: int,
     supplier_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Добавить связь пользователя с поставщиком"""
     if current_user.id != user_id and current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
-    
-    # Проверяем, что поставщик существует
+
     supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
     if not supplier:
-        raise HTTPException(status_code=404, detail="Поставщик не найден")
-    
-    # Проверяем, что связь не существует
-    existing = db.query(UserSupplier).filter(
-        UserSupplier.user_id == user_id,
-        UserSupplier.supplier_id == supplier_id
-    ).first()
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    existing = (
+        db.query(UserSupplier)
+        .filter(
+            UserSupplier.user_id == user_id,
+            UserSupplier.supplier_id == supplier_id,
+        )
+        .first()
+    )
     if existing:
-        raise HTTPException(status_code=400, detail="Связь уже существует")
-    
+        raise HTTPException(status_code=400, detail="Relation already exists")
+
     user_supplier = UserSupplier(user_id=user_id, supplier_id=supplier_id)
     db.add(user_supplier)
     db.commit()
@@ -147,20 +201,23 @@ def remove_user_supplier(
     user_id: int,
     supplier_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Удалить связь пользователя с поставщиком"""
     if current_user.id != user_id and current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
-    
-    user_supplier = db.query(UserSupplier).filter(
-        UserSupplier.user_id == user_id,
-        UserSupplier.supplier_id == supplier_id
-    ).first()
-    
+
+    user_supplier = (
+        db.query(UserSupplier)
+        .filter(
+            UserSupplier.user_id == user_id,
+            UserSupplier.supplier_id == supplier_id,
+        )
+        .first()
+    )
+
     if not user_supplier:
-        raise HTTPException(status_code=404, detail="Связь не найдена")
-    
+        raise HTTPException(status_code=404, detail="Relation not found")
+
     db.delete(user_supplier)
     db.commit()
-    return {"message": "Связь удалена"}
+    return {"message": "Relation deleted"}

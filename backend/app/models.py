@@ -104,6 +104,12 @@ class VehicleType(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    suppliers: Mapped[list["Supplier"]] = relationship(
+        "Supplier",
+        secondary=lambda: supplier_vehicle_type_association,
+        back_populates="vehicle_types"
+    )
+
 
 # НОВЫЕ СПРАВОЧНИКИ
 
@@ -150,6 +156,20 @@ class Supplier(Base):
     transport_type: Mapped["TransportTypeRef | None"] = relationship("TransportTypeRef", back_populates="suppliers")
     
     prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="supplier")
+
+    vehicle_types: Mapped[list["VehicleType"]] = relationship(
+        "VehicleType",
+        secondary=lambda: supplier_vehicle_type_association,
+        back_populates="suppliers"
+    )
+
+
+supplier_vehicle_type_association = Table(
+    "supplier_vehicle_type_association",
+    Base.metadata,
+    Column("supplier_id", Integer, ForeignKey("suppliers.id"), primary_key=True),
+    Column("vehicle_type_id", Integer, ForeignKey("vehicle_types.id"), primary_key=True)
+)
 
 
 # Связь многие-ко-многим между пользователями и поставщиками

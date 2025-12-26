@@ -27,9 +27,18 @@ interface Supplier {
     name: string;
 }
 
+interface SlotBookingInfo {
+  id: number
+  supplier_name?: string
+  transport_sheet?: string | null
+  cubes?: number | null
+}
+
 interface Dock {
   id: number
   name: string
+  object_id: number
+  dock_type: 'entrance' | 'exit' | 'universal' | string
 }
 
 interface TimeSlot {
@@ -41,6 +50,7 @@ interface TimeSlot {
   occupancy: number
   status: 'free' | 'partial' | 'full' | string
   dock_id?: number
+  bookings?: SlotBookingInfo[]
 }
 
 interface EventItem {
@@ -51,6 +61,7 @@ interface EventItem {
   resource: TimeSlot
   availableDocks?: number[]
   resourceId?: number
+  tooltip?: string
 }
 
 
@@ -70,6 +81,20 @@ const BookingIn: React.FC = () => {
     const [range, setRange] = useState<{ start: Date, end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) });
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null);
+    const filteredDocks = selectedObject
+        ? docks.filter(d => d.object_id === selectedObject && (d.dock_type === 'entrance' || d.dock_type === 'universal'))
+        : [];
+
+    const formatBookingTooltip = (bookings?: SlotBookingInfo[]) => {
+        if (!bookings || bookings.length === 0) return undefined;
+        const lines = bookings.map((b, idx) => {
+            const transportSheet = b.transport_sheet || 'ne ukazan';
+            const supplier = b.supplier_name || 'ne ukazan';
+            const volume = b.cubes ?? 'ne ukazan';
+            return `${idx + 1}. Transportnyy list: ${transportSheet} - Postavshchik: ${supplier} - Obem: ${volume}`;
+        });
+        return lines.join('\n');
+    };
 
 
     useEffect(() => {
@@ -141,6 +166,7 @@ const BookingIn: React.FC = () => {
                     end.setHours(eh, em, 0, 0);
 
                     const title = `${slot.occupancy}/${slot.capacity}`;
+                    const tooltip = formatBookingTooltip(slot.bookings);
 
                     evts.push({
                         id: `slot-${slot.id}-${d.toDateString()}`,
@@ -150,6 +176,7 @@ const BookingIn: React.FC = () => {
                         resource: slot,
                         availableDocks: slot.dock_id ? [slot.dock_id] : [],
                         resourceId: slot.dock_id,
+                        tooltip,
                     });
                 });
             } else {
@@ -277,17 +304,17 @@ const BookingIn: React.FC = () => {
         let bg = '#e6ffed';
         let border = '#22c55e';
         let cursor = 'pointer';
-        let title = 'Свободно';
+        let title = event.tooltip || 'Svobodno';
 
         if (status === 'partial') {
             bg = '#fff7e6';
             border = '#f59e0b';
-            title = 'Частично занято';
+            if (!event.tooltip) title = 'Chastichno zanyato';
         } else if (status === 'full') {
             bg = '#ffe6e6';
             border = '#ef4444';
             cursor = 'not-allowed';
-            title = 'Нет свободных мест';
+            if (!event.tooltip) title = 'Nedostupno';
         }
         
         return {
@@ -361,9 +388,10 @@ const BookingIn: React.FC = () => {
                     onSelectEvent={openModalForEvent as any}
                     onRangeChange={onRangeChange as any}
                     onView={onViewChange as any}
-                    resources={currentView === 'day' ? docks : undefined}
+                    resources={currentView === 'day' ? filteredDocks : undefined}
                     resourceIdAccessor="id"
                     resourceTitleAccessor="name"
+                    tooltipAccessor="tooltip"
                     dayPropGetter={dayPropGetter}
                     eventPropGetter={eventPropGetter}
                     culture="ru"

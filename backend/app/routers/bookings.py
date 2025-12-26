@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
 from typing import List
 from datetime import datetime, timedelta
@@ -18,6 +18,19 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     vehicle_type = db.query(models.VehicleType).filter(models.VehicleType.id == booking.vehicle_type_id).first()
     if not vehicle_type:
         raise HTTPException(status_code=404, detail="Vehicle type not found")
+    
+    obj = db.query(models.Object).filter(models.Object.id == booking.object_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Object not found")
+
+    if booking.supplier_id:
+        supplier = db.query(models.Supplier).options(
+            joinedload(models.Supplier.vehicle_types)
+        ).filter(models.Supplier.id == booking.supplier_id).first()
+        if supplier and supplier.vehicle_types:
+            allowed_ids = {vt.id for vt in supplier.vehicle_types}
+            if booking.vehicle_type_id not in allowed_ids:
+                raise HTTPException(status_code=400, detail="Selected vehicle type is not allowed for this supplier")
     
     try:
         duration = get_duration(
@@ -44,10 +57,11 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     start_time = datetime.strptime(booking.start_time, "%H:%M").time()
     
     # Находим доступные слоты
-    available_slots = db.query(models.TimeSlot).filter(
+    available_slots = db.query(models.TimeSlot).join(models.Dock).filter(
         models.TimeSlot.slot_date == booking_date,
         models.TimeSlot.start_time >= start_time,
-        models.TimeSlot.is_available == True
+        models.TimeSlot.is_available == True,
+        models.Dock.object_id == booking.object_id
     ).order_by(models.TimeSlot.start_time).all()
     
     # Группируем слоты по докам
@@ -180,6 +194,54 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     db.refresh(new_booking)
     return new_booking
 
+def _serialize_booking(db: Session, booking: models.Booking, include_user: bool = False):
+    """Привести бронирование к формату BookingWithDetails"""
+    slots = db.query(models.TimeSlot, models.BookingTimeSlot).join(
+        models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
+    ).filter(models.BookingTimeSlot.booking_id == booking.id).order_by(models.TimeSlot.start_time).all()
+    
+    if not slots:
+        return None
+
+    first_slot = slots[0][0]
+    last_slot = slots[-1][0]
+
+    vehicle_type = db.query(models.VehicleType).filter(models.VehicleType.id == booking.vehicle_type_id).first()
+    dock = db.query(models.Dock).filter(models.Dock.id == first_slot.dock_id).first()
+    obj = db.query(models.Object).filter(models.Object.id == dock.object_id).first() if dock else None
+    supplier = db.query(models.Supplier).filter(models.Supplier.id == booking.supplier_id).first() if booking.supplier_id else None
+    zone = db.query(models.Zone).filter(models.Zone.id == booking.zone_id).first() if booking.zone_id else None
+    transport_type = db.query(models.TransportTypeRef).filter(models.TransportTypeRef.id == booking.transport_type_id).first() if booking.transport_type_id else None
+    user = db.query(models.User).filter(models.User.id == booking.user_id).first() if include_user else None
+
+    data = {
+        "id": booking.id,
+        "booking_date": first_slot.slot_date.isoformat(),
+        "start_time": first_slot.start_time.strftime("%H:%M"),
+        "end_time": last_slot.end_time.strftime("%H:%M"),
+        "vehicle_plate": booking.vehicle_plate,
+        "driver_name": booking.driver_full_name,
+        "driver_phone": booking.driver_phone,
+        "vehicle_type_name": vehicle_type.name if vehicle_type else "Unknown",
+        "dock_name": dock.name if dock else "Unknown",
+        "status": booking.status,
+        "slots_count": len(slots),
+        "created_at": booking.created_at.isoformat(),
+        "supplier_name": supplier.name if supplier else None,
+        "zone_name": zone.name if zone else None,
+        "transport_type_name": transport_type.name if transport_type else None,
+        "cubes": booking.cubes,
+        "transport_sheet": booking.transport_sheet,
+        "object_id": obj.id if obj else None,
+        "object_name": obj.name if obj else None
+    }
+
+    if include_user and user:
+        data["user_email"] = user.email
+        data["user_full_name"] = user.full_name
+
+    return data
+
 @router.put("/{booking_id}/cancel")
 def cancel_booking(
     booking_id: int,
@@ -223,70 +285,9 @@ def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = 
     
     result = []
     for booking in bookings:
-        # Получаем информацию о пользователе, создавшем запись
-        user = db.query(models.User).filter(models.User.id == booking.user_id).first()
-        
-        # Получаем слоты для этой записи
-        slots = db.query(models.TimeSlot, models.BookingTimeSlot).join(
-            models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
-        ).filter(models.BookingTimeSlot.booking_id == booking.id).all()
-        
-        if slots:
-            first_slot = slots[0][0]  # TimeSlot
-            last_slot = slots[-1][0]  # TimeSlot
-            
-            # Получаем информацию о типе транспорта
-            vehicle_type = db.query(models.VehicleType).filter(
-                models.VehicleType.id == booking.vehicle_type_id
-            ).first()
-            
-            # Получаем информацию о доке
-            dock = db.query(models.Dock).filter(
-                models.Dock.id == first_slot.dock_id
-            ).first()
-            
-            # Получаем информацию о поставщике
-            supplier = None
-            if booking.supplier_id:
-                supplier = db.query(models.Supplier).filter(
-                    models.Supplier.id == booking.supplier_id
-                ).first()
-            
-            # Получаем информацию о зоне
-            zone = None
-            if booking.zone_id:
-                zone = db.query(models.Zone).filter(
-                    models.Zone.id == booking.zone_id
-                ).first()
-            
-            # Получаем информацию о типе перевозки
-            transport_type = None
-            if booking.transport_type_id:
-                transport_type = db.query(models.TransportTypeRef).filter(
-                    models.TransportTypeRef.id == booking.transport_type_id
-                ).first()
-            
-            result.append({
-                "id": booking.id,
-                "booking_date": first_slot.slot_date.isoformat(),
-                "start_time": first_slot.start_time.strftime("%H:%M"),
-                "end_time": last_slot.end_time.strftime("%H:%M"),
-                "vehicle_plate": booking.vehicle_plate,
-                "driver_name": booking.driver_full_name,
-                "driver_phone": booking.driver_phone,
-                "vehicle_type_name": vehicle_type.name if vehicle_type else "Unknown",
-                "dock_name": dock.name if dock else "Unknown",
-                "status": booking.status,
-                "slots_count": len(slots),
-                "created_at": booking.created_at.isoformat(),
-                "supplier_name": supplier.name if supplier else None,
-                "zone_name": zone.name if zone else None,
-                "transport_type_name": transport_type.name if transport_type else None,
-                "cubes": booking.cubes,
-                "transport_sheet": booking.transport_sheet,
-                "user_email": user.email if user else "Unknown",
-                "user_full_name": user.full_name if user else "Unknown"
-            })
+        serialized = _serialize_booking(db, booking, include_user=True)
+        if serialized:
+            result.append(serialized)
     
     return result
 
@@ -300,67 +301,41 @@ def get_my_bookings(db: Session = Depends(get_db), current_user: models.User = D
     
     result = []
     for booking in bookings:
-        # Получаем слоты для этой записи
-        slots = db.query(models.TimeSlot, models.BookingTimeSlot).join(
-            models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
-        ).filter(models.BookingTimeSlot.booking_id == booking.id).all()
-        
-        if slots:
-            first_slot = slots[0][0]  # TimeSlot
-            last_slot = slots[-1][0]  # TimeSlot
-            
-            # Получаем информацию о типе транспорта
-            vehicle_type = db.query(models.VehicleType).filter(
-                models.VehicleType.id == booking.vehicle_type_id
-            ).first()
-            
-            # Получаем информацию о доке
-            dock = db.query(models.Dock).filter(
-                models.Dock.id == first_slot.dock_id
-            ).first()
-            
-            # Получаем информацию о поставщике
-            supplier = None
-            if booking.supplier_id:
-                supplier = db.query(models.Supplier).filter(
-                    models.Supplier.id == booking.supplier_id
-                ).first()
-            
-            # Получаем информацию о зоне
-            zone = None
-            if booking.zone_id:
-                zone = db.query(models.Zone).filter(
-                    models.Zone.id == booking.zone_id
-                ).first()
-            
-            # Получаем информацию о типе перевозки
-            transport_type = None
-            if booking.transport_type_id:
-                transport_type = db.query(models.TransportTypeRef).filter(
-                    models.TransportTypeRef.id == booking.transport_type_id
-                ).first()
-            
-            result.append({
-                "id": booking.id,
-                "booking_date": first_slot.slot_date.isoformat(),
-                "start_time": first_slot.start_time.strftime("%H:%M"),
-                "end_time": last_slot.end_time.strftime("%H:%M"),
-                "vehicle_plate": booking.vehicle_plate,
-                "driver_name": booking.driver_full_name,
-                "driver_phone": booking.driver_phone,
-                "vehicle_type_name": vehicle_type.name if vehicle_type else "Unknown",
-                "dock_name": dock.name if dock else "Unknown",
-                "status": booking.status,
-                "slots_count": len(slots),
-                "created_at": booking.created_at.isoformat(),
-                "supplier_name": supplier.name if supplier else None,
-                "zone_name": zone.name if zone else None,
-                "transport_type_name": transport_type.name if transport_type else None,
-                "cubes": booking.cubes,
-                "transport_sheet": booking.transport_sheet
-            })
+        serialized = _serialize_booking(db, booking)
+        if serialized:
+            result.append(serialized)
     
     return result
+
+@router.put("/{booking_id}/transport-sheet", response_model=schemas.BookingWithDetails)
+def update_transport_sheet(
+    booking_id: int,
+    payload: schemas.BookingTransportSheetUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Обновить транспортный лист для брони"""
+    query = db.query(models.Booking).filter(models.Booking.id == booking_id)
+    if current_user.role != models.UserRole.admin:
+        query = query.filter(models.Booking.user_id == current_user.id)
+    booking = query.first()
+
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if payload.transport_sheet and len(payload.transport_sheet) > 20:
+        raise HTTPException(status_code=400, detail="Transport sheet must be at most 20 characters")
+
+    booking.transport_sheet = payload.transport_sheet or None
+    booking.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(booking)
+
+    serialized = _serialize_booking(db, booking, include_user=current_user.role == models.UserRole.admin)
+    if not serialized:
+        raise HTTPException(status_code=500, detail="Booking slots not found")
+
+    return serialized
 
 @router.get("/{booking_id}/slots")
 def get_booking_slots(

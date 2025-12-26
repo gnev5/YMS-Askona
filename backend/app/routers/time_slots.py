@@ -11,7 +11,7 @@ from ..deps import require_admin
 router = APIRouter()
 
 
-@router.get("/", response_model=List[schemas.TimeSlotWithOccupancy])
+@router.get("/", response_model=List[schemas.TimeSlotWithBookings])
 def list_time_slots(
     from_date: date,
     to_date: date,
@@ -21,9 +21,8 @@ def list_time_slots(
     booking_type: Optional[str] = None, # "in" or "out"
     db: Session = Depends(get_db),
 ):
-    """Получить слоты для календаря (обновленная версия)"""
+    """?????>???????'?? ???>???'?< ???>?? ?????>???????????? (???+???????>?????????? ????????????)"""
     
-    # Start with a query for all docks
     docks_query = db.query(models.Dock.id)
 
     if object_id:
@@ -37,7 +36,6 @@ def list_time_slots(
     if supplier_id:
         supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
         if supplier and supplier.zone_id:
-            # Docks that have no specific zones or are in the supplier's zone
             docks_query = docks_query.filter(
                 or_(
                     ~models.Dock.available_zones.any(),
@@ -46,7 +44,6 @@ def list_time_slots(
             )
 
     if transport_type_id:
-        # Docks that have no specific transport types or have the given transport type
         docks_query = docks_query.filter(
             or_(
                 ~models.Dock.available_transport_types.any(),
@@ -66,12 +63,48 @@ def list_time_slots(
         models.TimeSlot.dock_id.in_(dock_ids)
     ).all()
     
-    # Подсчитываем занятость
+    if not slots:
+        return []
+
+    slot_ids = [slot.id for slot in slots]
+
+    occupancy_rows = (
+        db.query(models.BookingTimeSlot.time_slot_id, func.count(models.BookingTimeSlot.id))
+        .filter(models.BookingTimeSlot.time_slot_id.in_(slot_ids))
+        .group_by(models.BookingTimeSlot.time_slot_id)
+        .all()
+    )
+    occupancy_map = {row[0]: row[1] for row in occupancy_rows}
+
+    booking_rows = (
+        db.query(
+            models.BookingTimeSlot.time_slot_id,
+            models.Booking.id.label("booking_id"),
+            models.Supplier.name.label("supplier_name"),
+            models.Booking.cubes.label("cubes"),
+            models.Booking.transport_sheet.label("transport_sheet"),
+        )
+        .join(models.Booking, models.Booking.id == models.BookingTimeSlot.booking_id)
+        .outerjoin(models.Supplier, models.Supplier.id == models.Booking.supplier_id)
+        .filter(models.BookingTimeSlot.time_slot_id.in_(slot_ids))
+        .filter(models.Booking.status == "confirmed")
+        .all()
+    )
+
+    bookings_map: dict[int, list[schemas.TimeSlotBookingInfo]] = {}
+    for row in booking_rows:
+        bookings_map.setdefault(row.time_slot_id, []).append(
+            schemas.TimeSlotBookingInfo(
+                id=row.booking_id,
+                supplier_name=row.supplier_name,
+                cubes=row.cubes,
+                transport_sheet=row.transport_sheet,
+            )
+        )
+
     result = []
     for slot in slots:
-        occupancy = db.query(func.count(models.BookingTimeSlot.id)).filter(
-            models.BookingTimeSlot.time_slot_id == slot.id
-        ).scalar() or 0
+        occupancy = occupancy_map.get(slot.id, 0)
         
         status = "free"
         if occupancy == 0:
@@ -82,7 +115,7 @@ def list_time_slots(
             status = "full"
         
         result.append(
-            schemas.TimeSlotWithOccupancy(
+            schemas.TimeSlotWithBookings(
                 id=slot.id,
                 day_of_week=slot.slot_date.weekday(),
                 start_time=slot.start_time.strftime("%H:%M"),
@@ -91,11 +124,11 @@ def list_time_slots(
                 dock_id=slot.dock_id,
                 occupancy=occupancy,
                 status=status,
+                bookings=bookings_map.get(slot.id, [])
             )
         )
     
     return result
-
 
 @router.get("/journal")
 def get_time_slots_journal(

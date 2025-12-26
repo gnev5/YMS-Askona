@@ -20,6 +20,7 @@ interface Supplier {
   name: string
   comment?: string
   zone_id: number
+  vehicle_types?: VehicleType[]
 }
 
 interface TransportType {
@@ -74,6 +75,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
   const [supplierSearch, setSupplierSearch] = useState('')
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false)
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
+  const [allowedVehicleTypes, setAllowedVehicleTypes] = useState<VehicleType[]>([])
   const [duration, setDuration] = useState<number | null>(null)
   const [form, setForm] = useState<BookingForm>({
     vehicle_plate: '',
@@ -137,6 +139,22 @@ const BookingModal: React.FC<BookingModalProps> = ({
       setForm(prev => ({ ...prev, transport_type_id: prefillTransportTypeId }))
     }
   }, [isOpen, prefillTransportTypeId, transportTypes])
+
+  useEffect(() => {
+    const supplierTypes = selectedSupplier?.vehicle_types || []
+    if (supplierTypes.length > 0) {
+      setAllowedVehicleTypes(supplierTypes.map(v => ({ ...v })))
+      const allowedIds = supplierTypes.map(v => v.id)
+      if (!allowedIds.includes(form.vehicle_type_id)) {
+        setForm(prev => ({ ...prev, vehicle_type_id: supplierTypes[0].id }))
+      }
+    } else {
+      setAllowedVehicleTypes(vehicleTypes)
+      if (form.vehicle_type_id === 0 && vehicleTypes.length > 0) {
+        setForm(prev => ({ ...prev, vehicle_type_id: vehicleTypes[0].id }))
+      }
+    }
+  }, [selectedSupplier, vehicleTypes, form.vehicle_type_id])
 
   useEffect(() => {
     const fetchDuration = async () => {
@@ -313,7 +331,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
                 onChange={e => setForm({ ...form, vehicle_type_id: Number(e.target.value) })}
               >
                 <option value={0}>Выберите тип</option>
-                {vehicleTypes.map(vt => (
+                {allowedVehicleTypes.map(vt => (
                   <option key={vt.id} value={vt.id}>{vt.name} ({vt.duration_minutes} мин)</option>
                 ))}
               </select>

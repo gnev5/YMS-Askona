@@ -1,9 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 interface Zone {
+  id: number
+  name: string
+}
+
+interface VehicleType {
   id: number
   name: string
 }
@@ -14,19 +19,22 @@ interface Supplier {
   comment?: string
   zone_id: number
   zone?: Zone
+  vehicle_types?: VehicleType[]
 }
 
 const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [zones, setZones] = useState<Zone[]>([])
+  const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
-  const [formData, setFormData] = useState({ 
-    name: '', 
-    comment: '', 
-    zone_id: 0 
+  const [formData, setFormData] = useState({
+    name: '',
+    comment: '',
+    zone_id: 0,
+    vehicle_type_ids: [] as number[],
   })
 
   const token = localStorage.getItem('token')
@@ -39,7 +47,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       const { data } = await axios.get<Supplier[]>(`${API_BASE}/api/suppliers/`)
       setSuppliers(data)
     } catch (e: any) {
-      setError('Ошибка загрузки поставщиков')
+      setError('Не удалось загрузить поставщиков')
     } finally {
       setLoading(false)
     }
@@ -52,14 +60,24 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       if (data.length > 0 && formData.zone_id === 0) {
         setFormData(prev => ({ ...prev, zone_id: data[0].id }))
       }
-    } catch (e: any) {
-      console.error('Ошибка загрузки зон:', e)
+    } catch (e) {
+      console.error('Failed to load zones', e)
+    }
+  }
+
+  const loadVehicleTypes = async () => {
+    try {
+      const { data } = await axios.get<VehicleType[]>(`${API_BASE}/api/vehicle-types`)
+      setVehicleTypes(data)
+    } catch (e) {
+      console.error('Failed to load vehicle types', e)
     }
   }
 
   useEffect(() => {
     loadSuppliers()
     loadZones()
+    loadVehicleTypes()
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -85,8 +103,8 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         await axios.post(`${API_BASE}/api/suppliers/`, formData, { headers })
         setSuccess('Поставщик создан')
       }
-      
-      setFormData({ name: '', comment: '', zone_id: 0 })
+
+      setFormData({ name: '', comment: '', zone_id: 0, vehicle_type_ids: [] })
       setEditingSupplier(null)
       loadSuppliers()
     } catch (e: any) {
@@ -98,15 +116,16 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   const handleEdit = (supplier: Supplier) => {
     setEditingSupplier(supplier)
-    setFormData({ 
-      name: supplier.name, 
-      comment: supplier.comment || '', 
-      zone_id: supplier.zone_id 
+    setFormData({
+      name: supplier.name,
+      comment: supplier.comment || '',
+      zone_id: supplier.zone_id,
+      vehicle_type_ids: (supplier.vehicle_types || []).map(v => v.id),
     })
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Вы уверены, что хотите удалить этого поставщика?')) return
+    if (!confirm('Удалить поставщика?')) return
 
     setLoading(true)
     setError(null)
@@ -123,7 +142,19 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   const handleCancel = () => {
     setEditingSupplier(null)
-    setFormData({ name: '', comment: '', zone_id: 0 })
+    setFormData({ name: '', comment: '', zone_id: 0, vehicle_type_ids: [] })
+  }
+
+  const toggleVehicleType = (id: number) => {
+    setFormData(prev => {
+      const exists = prev.vehicle_type_ids.includes(id)
+      return {
+        ...prev,
+        vehicle_type_ids: exists
+          ? prev.vehicle_type_ids.filter(x => x !== id)
+          : [...prev.vehicle_type_ids, id],
+      }
+    })
   }
 
   return (
@@ -138,7 +169,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
       <form onSubmit={handleSubmit} style={{ marginBottom: 24, padding: 16, border: '1px solid #e5e7eb', borderRadius: 8 }}>
         <h3>{editingSupplier ? 'Редактировать поставщика' : 'Добавить поставщика'}</h3>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 12 }}>
           <label style={{ display: 'block', marginBottom: 4 }}>Название поставщика:</label>
           <input
             type="text"
@@ -149,17 +180,17 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             required
           />
         </div>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 12 }}>
           <label style={{ display: 'block', marginBottom: 4 }}>Комментарий:</label>
           <textarea
             value={formData.comment}
             onChange={e => setFormData({ ...formData, comment: e.target.value })}
-            placeholder="Введите комментарий"
+            placeholder="Описание или примечание"
             rows={3}
             style={{ width: '100%', padding: 8, border: '1px solid #d1d5db', borderRadius: 4 }}
           />
         </div>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 12 }}>
           <label style={{ display: 'block', marginBottom: 4 }}>Зона:</label>
           <select
             value={formData.zone_id}
@@ -175,9 +206,25 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             ))}
           </select>
         </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>Типы ТС (можно несколько):</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6 }}>
+            {vehicleTypes.map(vt => (
+              <label key={vt.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={formData.vehicle_type_ids.includes(vt.id)}
+                  onChange={() => toggleVehicleType(vt.id)}
+                />
+                <span>{vt.name}</span>
+              </label>
+            ))}
+            {vehicleTypes.length === 0 && <div style={{ color: '#6b7280' }}>Нет типов ТС</div>}
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" disabled={loading}>
-            {loading ? 'Сохранение...' : (editingSupplier ? 'Обновить' : 'Создать')}
+            {loading ? 'Сохранение...' : editingSupplier ? 'Сохранить' : 'Создать'}
           </button>
           {editingSupplier && (
             <button type="button" onClick={handleCancel}>
@@ -195,6 +242,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Название</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Комментарий</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Зона</th>
+              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Типы ТС</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Действия</th>
             </tr>
           </thead>
@@ -205,16 +253,19 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{supplier.name}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>{supplier.comment || '-'}</td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
-                  {supplier.zone?.name || 'Не указана'}
+                  {supplier.zone?.name || '—'}
                 </td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
-                  <button 
+                  {(supplier.vehicle_types || []).map(v => v.name).join(', ') || '—'}
+                </td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
+                  <button
                     onClick={() => handleEdit(supplier)}
                     style={{ marginRight: 8, padding: '4px 8px', fontSize: '12px' }}
                   >
                     Редактировать
                   </button>
-                  <button 
+                  <button
                     onClick={() => handleDelete(supplier.id)}
                     style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#dc2626', color: 'white' }}
                   >
