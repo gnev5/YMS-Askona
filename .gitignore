@@ -97,4 +97,4 @@ temp/
 .env.production.local
 
 # Buckups
-buckups/
+backups/
