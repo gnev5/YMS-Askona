@@ -123,7 +123,7 @@ class TransportTypeRef(Base):
     # Связи
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="transport_type")
     docks: Mapped[list["Dock"]] = relationship("Dock", secondary=dock_transport_type_association, back_populates="available_transport_types")
-    suppliers: Mapped[list["Supplier"]] = relationship("Supplier", back_populates="transport_type")
+    suppliers: Mapped[list["Supplier"]] = relationship("Supplier", secondary=lambda: supplier_transport_type_association, back_populates="transport_types")
     prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="transport_type")
 
 
@@ -151,15 +151,17 @@ class Supplier(Base):
     zone: Mapped["Zone"] = relationship("Zone", back_populates="suppliers")
     bookings: Mapped[list["Booking"]] = relationship("Booking", back_populates="supplier")
     user_suppliers: Mapped[list["UserSupplier"]] = relationship("UserSupplier", back_populates="supplier")
-
-    transport_type_id: Mapped[int | None] = mapped_column(ForeignKey("transport_types.id"), nullable=True)
-    transport_type: Mapped["TransportTypeRef | None"] = relationship("TransportTypeRef", back_populates="suppliers")
     
     prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="supplier")
 
     vehicle_types: Mapped[list["VehicleType"]] = relationship(
         "VehicleType",
         secondary=lambda: supplier_vehicle_type_association,
+        back_populates="suppliers"
+    )
+    transport_types: Mapped[list["TransportTypeRef"]] = relationship(
+        "TransportTypeRef",
+        secondary=lambda: supplier_transport_type_association,
         back_populates="suppliers"
     )
 
@@ -169,6 +171,14 @@ supplier_vehicle_type_association = Table(
     Base.metadata,
     Column("supplier_id", Integer, ForeignKey("suppliers.id"), primary_key=True),
     Column("vehicle_type_id", Integer, ForeignKey("vehicle_types.id"), primary_key=True)
+)
+
+
+supplier_transport_type_association = Table(
+    "supplier_transport_type_association",
+    Base.metadata,
+    Column("supplier_id", Integer, ForeignKey("suppliers.id"), primary_key=True),
+    Column("transport_type_id", Integer, ForeignKey("transport_types.id"), primary_key=True)
 )
 
 

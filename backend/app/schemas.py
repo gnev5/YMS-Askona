@@ -250,10 +250,19 @@ class SupplierBase(BaseModel):
 
 class SupplierCreate(SupplierBase):
     vehicle_type_ids: List[int] = []
+    transport_type_ids: List[int] = []
+
+class SupplierUpdate(BaseModel):
+    name: Optional[str] = None
+    comment: Optional[str] = None
+    zone_id: Optional[int] = None
+    vehicle_type_ids: List[int] = []
+    transport_type_ids: List[int] = []
 
 class Supplier(SupplierBase):
     id: int
     vehicle_types: List[VehicleType] = []
+    transport_types: List[TransportType] = []
 
     class Config:
         from_attributes = True

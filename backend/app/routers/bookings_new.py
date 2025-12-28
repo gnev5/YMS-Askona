@@ -50,6 +50,12 @@ def create_booking(
     # Ищем подходящую цепочку слотов
     chosen_slots = None
     for dock_id, dock_slots in slots_by_dock.items():
+        # >>> ДОБАВЛЯЕМ ВАЛИДАЦИЮ ТИПА ДОКА
+        dock = db.query(models.Dock).filter(models.Dock.id == dock_id).first()
+        if not dock or dock.dock_type == models.DockType.exit:
+            continue  # Пропускаем доки типа "Выход"
+        # <<< КОНЕЦ ВАЛИДАЦИИ
+
         # Сортируем слоты по времени
         dock_slots.sort(key=lambda x: x.start_time)
         

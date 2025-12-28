@@ -3,10 +3,11 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List
 
 from ..db import get_db
-from ..models import Supplier, UserSupplier, UserRole, VehicleType
+from ..models import Supplier, UserSupplier, UserRole, VehicleType, TransportTypeRef
 from ..schemas import (
     Supplier as SupplierSchema,
     SupplierCreate,
+    SupplierUpdate,
     SupplierWithZone,
     UserSupplier as UserSupplierSchema,
     UserSupplierCreate,
@@ -23,6 +24,7 @@ def get_suppliers(db: Session = Depends(get_db)):
         .options(
             joinedload(Supplier.zone),
             joinedload(Supplier.vehicle_types),
+            joinedload(Supplier.transport_types),
         )
         .all()
     )
@@ -39,6 +41,7 @@ def get_my_suppliers(
             .options(
                 joinedload(Supplier.zone),
                 joinedload(Supplier.vehicle_types),
+                joinedload(Supplier.transport_types),
             )
             .all()
         )
@@ -50,6 +53,7 @@ def get_my_suppliers(
         .options(
             joinedload(Supplier.zone),
             joinedload(Supplier.vehicle_types),
+            joinedload(Supplier.transport_types),
         )
         .filter(Supplier.id.in_(supplier_ids))
         .all()
@@ -65,17 +69,22 @@ def create_supplier(
     if current_user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
 
-    vehicle_types: list[VehicleType] = []
-    if supplier.vehicle_type_ids:
-        vehicle_types = db.query(VehicleType).filter(VehicleType.id.in_(supplier.vehicle_type_ids)).all()
-        if len(vehicle_types) != len(supplier.vehicle_type_ids):
-            raise HTTPException(status_code=404, detail="One or more vehicle types not found")
+    # Связи
+    vehicle_types = db.query(VehicleType).filter(VehicleType.id.in_(supplier.vehicle_type_ids)).all()
+    if len(vehicle_types) != len(supplier.vehicle_type_ids):
+        raise HTTPException(status_code=404, detail="One or more vehicle types not found")
+        
+    transport_types = db.query(TransportTypeRef).filter(TransportTypeRef.id.in_(supplier.transport_type_ids)).all()
+    if len(transport_types) != len(supplier.transport_type_ids):
+        raise HTTPException(status_code=404, detail="One or more transport types not found")
 
     data = supplier.dict()
     data.pop("vehicle_type_ids", None)
+    data.pop("transport_type_ids", None)
 
     db_supplier = Supplier(**data)
     db_supplier.vehicle_types = vehicle_types
+    db_supplier.transport_types = transport_types
     db.add(db_supplier)
     db.commit()
     db.refresh(db_supplier)
@@ -89,6 +98,7 @@ def get_supplier(supplier_id: int, db: Session = Depends(get_db)):
         .options(
             joinedload(Supplier.zone),
             joinedload(Supplier.vehicle_types),
+            joinedload(Supplier.transport_types),
         )
         .filter(Supplier.id == supplier_id)
         .first()
@@ -101,7 +111,7 @@ def get_supplier(supplier_id: int, db: Session = Depends(get_db)):
 @router.put("/{supplier_id}", response_model=SupplierSchema)
 def update_supplier(
     supplier_id: int,
-    supplier: SupplierCreate,
+    supplier: SupplierUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -112,19 +122,26 @@ def update_supplier(
     if not db_supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
 
-    vehicle_types: list[VehicleType] = []
-    if supplier.vehicle_type_ids:
+    # Обновляем связи
+    if supplier.vehicle_type_ids is not None:
         vehicle_types = db.query(VehicleType).filter(VehicleType.id.in_(supplier.vehicle_type_ids)).all()
         if len(vehicle_types) != len(supplier.vehicle_type_ids):
             raise HTTPException(status_code=404, detail="One or more vehicle types not found")
+        db_supplier.vehicle_types = vehicle_types
 
-    data = supplier.dict()
-    data.pop("vehicle_type_ids", None)
+    if supplier.transport_type_ids is not None:
+        transport_types = db.query(TransportTypeRef).filter(TransportTypeRef.id.in_(supplier.transport_type_ids)).all()
+        if len(transport_types) != len(supplier.transport_type_ids):
+            raise HTTPException(status_code=404, detail="One or more transport types not found")
+        db_supplier.transport_types = transport_types
 
-    for key, value in data.items():
+    # Обновляем остальные поля
+    update_data = supplier.dict(exclude_unset=True)
+    update_data.pop("vehicle_type_ids", None)
+    update_data.pop("transport_type_ids", None)
+
+    for key, value in update_data.items():
         setattr(db_supplier, key, value)
-
-    db_supplier.vehicle_types = vehicle_types
 
     db.commit()
     db.refresh(db_supplier)
@@ -158,6 +175,7 @@ def get_user_suppliers(user_id: int, db: Session = Depends(get_db)):
         .options(
             joinedload(Supplier.zone),
             joinedload(Supplier.vehicle_types),
+            joinedload(Supplier.transport_types),
         )
         .filter(Supplier.id.in_(supplier_ids))
         .all()

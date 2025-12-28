@@ -13,6 +13,11 @@ interface VehicleType {
   name: string
 }
 
+interface TransportType {
+  id: number
+  name: string
+}
+
 interface Supplier {
   id: number
   name: string
@@ -20,12 +25,14 @@ interface Supplier {
   zone_id: number
   zone?: Zone
   vehicle_types?: VehicleType[]
+  transport_types?: TransportType[]
 }
 
 const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [zones, setZones] = useState<Zone[]>([])
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
+  const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -35,6 +42,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     comment: '',
     zone_id: 0,
     vehicle_type_ids: [] as number[],
+    transport_type_ids: [] as number[],
   })
 
   const token = localStorage.getItem('token')
@@ -44,7 +52,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     setLoading(true)
     setError(null)
     try {
-      const { data } = await axios.get<Supplier[]>(`${API_BASE}/api/suppliers/`)
+      const { data } = await axios.get<Supplier[]>(`${API_BASE}/api/suppliers/`, { headers })
       setSuppliers(data)
     } catch (e: any) {
       setError('Не удалось загрузить поставщиков')
@@ -55,7 +63,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   const loadZones = async () => {
     try {
-      const { data } = await axios.get<Zone[]>(`${API_BASE}/api/zones/`)
+      const { data } = await axios.get<Zone[]>(`${API_BASE}/api/zones/`, { headers })
       setZones(data)
       if (data.length > 0 && formData.zone_id === 0) {
         setFormData(prev => ({ ...prev, zone_id: data[0].id }))
@@ -67,10 +75,19 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   const loadVehicleTypes = async () => {
     try {
-      const { data } = await axios.get<VehicleType[]>(`${API_BASE}/api/vehicle-types`)
+      const { data } = await axios.get<VehicleType[]>(`${API_BASE}/api/vehicle-types`, { headers })
       setVehicleTypes(data)
     } catch (e) {
       console.error('Failed to load vehicle types', e)
+    }
+  }
+
+  const loadTransportTypes = async () => {
+    try {
+      const { data } = await axios.get<TransportType[]>(`${API_BASE}/api/transport-types`, { headers })
+      setTransportTypes(data)
+    } catch (e) {
+      console.error('Failed to load transport types', e)
     }
   }
 
@@ -78,6 +95,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     loadSuppliers()
     loadZones()
     loadVehicleTypes()
+    loadTransportTypes()
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -104,8 +122,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setSuccess('Поставщик создан')
       }
 
-      setFormData({ name: '', comment: '', zone_id: 0, vehicle_type_ids: [] })
-      setEditingSupplier(null)
+      handleCancel()
       loadSuppliers()
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Ошибка сохранения поставщика')
@@ -121,6 +138,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       comment: supplier.comment || '',
       zone_id: supplier.zone_id,
       vehicle_type_ids: (supplier.vehicle_types || []).map(v => v.id),
+      transport_type_ids: (supplier.transport_types || []).map(t => t.id),
     })
   }
 
@@ -142,17 +160,16 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
   const handleCancel = () => {
     setEditingSupplier(null)
-    setFormData({ name: '', comment: '', zone_id: 0, vehicle_type_ids: [] })
+    setFormData({ name: '', comment: '', zone_id: 0, vehicle_type_ids: [], transport_type_ids: [] })
   }
 
-  const toggleVehicleType = (id: number) => {
+  const toggleSelection = (field: 'vehicle_type_ids' | 'transport_type_ids', id: number) => {
     setFormData(prev => {
-      const exists = prev.vehicle_type_ids.includes(id)
+      const currentIds = prev[field]
+      const exists = currentIds.includes(id)
       return {
         ...prev,
-        vehicle_type_ids: exists
-          ? prev.vehicle_type_ids.filter(x => x !== id)
-          : [...prev.vehicle_type_ids, id],
+        [field]: exists ? currentIds.filter(x => x !== id) : [...currentIds, id],
       }
     })
   }
@@ -214,12 +231,28 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 <input
                   type="checkbox"
                   checked={formData.vehicle_type_ids.includes(vt.id)}
-                  onChange={() => toggleVehicleType(vt.id)}
+                  onChange={() => toggleSelection('vehicle_type_ids', vt.id)}
                 />
                 <span>{vt.name}</span>
               </label>
             ))}
             {vehicleTypes.length === 0 && <div style={{ color: '#6b7280' }}>Нет типов ТС</div>}
+          </div>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', marginBottom: 4 }}>Типы перевозки (можно несколько):</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6 }}>
+            {transportTypes.map(tt => (
+              <label key={tt.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={formData.transport_type_ids.includes(tt.id)}
+                  onChange={() => toggleSelection('transport_type_ids', tt.id)}
+                />
+                <span>{tt.name}</span>
+              </label>
+            ))}
+            {transportTypes.length === 0 && <div style={{ color: '#6b7280' }}>Нет типов перевозки</div>}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -243,6 +276,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Комментарий</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Зона</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Типы ТС</th>
+              <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Типы перевозки</th>
               <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Действия</th>
             </tr>
           </thead>
@@ -257,6 +291,9 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 </td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
                   {(supplier.vehicle_types || []).map(v => v.name).join(', ') || '—'}
+                </td>
+                <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
+                  {(supplier.transport_types || []).map(t => t.name).join(', ') || '—'}
                 </td>
                 <td style={{ padding: 8, borderBottom: '1px solid #f3f4f6' }}>
                   <button

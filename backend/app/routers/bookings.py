@@ -85,6 +85,10 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         dock_slots.sort(key=lambda x: x.start_time)
         dock = dock_map.get(dock_id)
         obj = object_map.get(dock.object_id) if dock else None
+
+        # Пропускаем доки типа "Выход" для операций на вход
+        if dock and dock.dock_type == models.DockType.exit:
+            continue
         
         # Ищем непрерывную цепочку нужной длины
         for i in range(len(dock_slots) - required_slots + 1):
@@ -397,3 +401,29 @@ def delete_booking(
     db.commit()
     
     return {"message": "Booking deleted successfully"}
+
+@router.get("/{booking_id}", response_model=schemas.BookingWithDetails)
+def get_booking_by_id(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Получить детальную информацию по одной записи"""
+    query = db.query(models.Booking).filter(models.Booking.id == booking_id)
+    
+    # If not admin, restrict to own bookings
+    if current_user.role != models.UserRole.admin:
+        query = query.filter(models.Booking.user_id == current_user.id)
+        
+    booking = query.first()
+    
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+        
+    serialized_booking = _serialize_booking(db, booking, include_user=current_user.role == models.UserRole.admin)
+    
+    if not serialized_booking:
+        raise HTTPException(status_code=500, detail="Failed to serialize booking")
+        
+    return serialized_booking
+

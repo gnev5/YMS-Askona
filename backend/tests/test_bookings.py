@@ -171,5 +171,51 @@ def test_create_booking_capacity_limit(test_client, db_session, test_user_fixtur
     assert "No available time slots found" in response2.json()["detail"]
 
 
+def test_create_booking_on_exit_dock_fails(test_client, db_session):
+    """
+    Тест проверяет, что нельзя создать бронь на ВХОД для дока с типом "Выход".
+    Ожидаемый результат: Ошибка 409, так как доступных слотов найдено не будет.
+    """
+    # 1. Arrange: Создаем тестовые данные
+    test_object = models.Object(name="Test Object", object_type="warehouse")
+    db_session.add(test_object)
+    db_session.commit()
+
+    exit_dock = models.Dock(name="Exit Dock", dock_type="exit", object_id=test_object.id)
+    db_session.add(exit_dock)
+    db_session.commit()
+
+    test_vehicle_type = models.VehicleType(name="Test Vehicle", duration_minutes=30)
+    db_session.add(test_vehicle_type)
+    db_session.commit()
+
+    test_slot = models.TimeSlot(
+        dock_id=exit_dock.id,
+        slot_date=date.today(),
+        start_time=time(14, 0),
+        end_time=time(14, 30),
+        capacity=1,
+    )
+    db_session.add(test_slot)
+    db_session.commit()
+
+    # 2. Act: Пытаемся создать бронирование на этот слот
+    booking_data = {
+        "vehicle_type_id": test_vehicle_type.id,
+        "booking_date": str(date.today()),
+        "start_time": "14:00",
+        "object_id": test_object.id, # Важно указать объект
+        "vehicle_plate": "EXIT-TEST",
+        "driver_full_name": "Test Driver",
+        "driver_phone": "1234567890",
+    }
+
+    response = test_client.post("/api/bookings/", json=booking_data)
+
+    # 3. Assert: Проверяем, что получили ошибку
+    assert response.status_code == 409
+    assert "No available time slots found" in response.json()["detail"]
+
+
 
 
