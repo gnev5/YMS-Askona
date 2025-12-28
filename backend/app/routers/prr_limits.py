@@ -9,6 +9,15 @@ from app.deps import get_db
 
 router = APIRouter()
 
+
+def _validate_duration(duration: int) -> None:
+    if duration < 0 or duration % 30 != 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Длительность должна быть неотрицательной и кратной 30 минутам",
+        )
+
+
 @router.get("/duration/", response_model=schemas.PrrLimit)
 def get_duration(
     object_id: int,
@@ -111,6 +120,7 @@ def get_duration(
 
 @router.post("/", response_model=schemas.PrrLimit)
 def create_prr_limit(prr_limit: schemas.PrrLimitCreate, db: Session = Depends(get_db)):
+    _validate_duration(prr_limit.duration_minutes)
     db_prr_limit = models.PrrLimit(**prr_limit.dict())
     db.add(db_prr_limit)
     db.commit()
@@ -134,8 +144,12 @@ def update_prr_limit(prr_limit_id: int, prr_limit: schemas.PrrLimitUpdate, db: S
     db_prr_limit = db.query(models.PrrLimit).filter(models.PrrLimit.id == prr_limit_id).first()
     if db_prr_limit is None:
         raise HTTPException(status_code=404, detail="PrrLimit not found")
-    
-    for key, value in prr_limit.dict(exclude_unset=True).items():
+
+    update_payload = prr_limit.dict(exclude_unset=True)
+    if "duration_minutes" in update_payload:
+        _validate_duration(update_payload["duration_minutes"])
+
+    for key, value in update_payload.items():
         setattr(db_prr_limit, key, value)
         
     db.commit()

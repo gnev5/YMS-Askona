@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const DURATION_VALIDATION_MESSAGE = 'Длительность должна быть неотрицательной и кратной 30 минутам';
 
 // Interfaces for the data
 interface PrrLimit {
@@ -97,7 +98,20 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         setEditingId(null);
     };
 
+    const validateDuration = (value: number) => {
+        if (value < 0 || value % 30 !== 0) {
+            setError(DURATION_VALIDATION_MESSAGE);
+            return false;
+        }
+        return true;
+    };
+
     const handleSubmit = async () => {
+        setError(null);
+        setSuccess(null);
+        if (!validateDuration(form.duration_minutes)) {
+            return;
+        }
         if (editingId) {
             update();
         } else {
@@ -177,7 +191,14 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                     <option value="">(Любой тип ТС)</option>
                     {vehicleTypes.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </select>
-                <input type="number" placeholder="Длительность (мин)" value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })} />
+                <input
+                    type="number"
+                    min={0}
+                    step={30}
+                    placeholder="Длительность (мин, кратно 30)"
+                    value={form.duration_minutes}
+                    onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })}
+                />
                 <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={handleSubmit}>{editingId ? 'Сохранить' : 'Создать'}</button>
                     {editingId && <button onClick={resetForm}>Отмена</button>}
