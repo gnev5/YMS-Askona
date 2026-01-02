@@ -300,6 +300,7 @@ class BookingCreateUpdated(BookingBaseUpdated):
     booking_date: str
     start_time: str
     object_id: int
+    booking_type: str = "in"
 
 class BookingUpdated(BookingBaseUpdated):
     id: int

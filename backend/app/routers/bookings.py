@@ -72,24 +72,52 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         slots_by_dock[slot.dock_id].append(slot)
 
     dock_ids = list(slots_by_dock.keys())
-    docks = db.query(models.Dock).filter(models.Dock.id.in_(dock_ids)).all() if dock_ids else []
-    dock_map = {d.id: d for d in docks}
-    object_ids = {d.object_id for d in docks}
-    objects = db.query(models.Object).filter(models.Object.id.in_(object_ids)).all() if object_ids else []
-    object_map = {o.id: o for o in objects}
+    docks_from_db = db.query(models.Dock).options(joinedload(models.Dock.available_transport_types)).filter(models.Dock.id.in_(dock_ids)).all() if dock_ids else []
+    dock_map = {d.id: d for d in docks_from_db}
+
+    # Сортируем доки по приоритету в зависимости от типа бронирования
+    def sort_key(dock_id):
+        dock = dock_map.get(dock_id)
+        if not dock:
+            return 3 # Should not happen
+        
+        if booking.booking_type == 'out':
+            if dock.dock_type == models.DockType.exit:
+                return 0
+            if dock.dock_type == models.DockType.universal:
+                return 1
+        elif booking.booking_type == 'in':
+            if dock.dock_type == models.DockType.entrance:
+                return 0
+            if dock.dock_type == models.DockType.universal:
+                return 1
+        return 2 # Other types last
+
+    sorted_dock_ids = sorted(dock_ids, key=sort_key)
     
     # Ищем подходящую цепочку слотов
     chosen_slots = None
-    for dock_id, dock_slots in slots_by_dock.items():
+    for dock_id in sorted_dock_ids:
+        dock_slots = slots_by_dock[dock_id]
         # Сортируем слоты по времени
         dock_slots.sort(key=lambda x: x.start_time)
+        
         dock = dock_map.get(dock_id)
-        obj = object_map.get(dock.object_id) if dock else None
+        # obj = object_map.get(dock.object_id) if dock else None # object_map is not defined, but dock.object is available.
+        obj = dock.object if dock else None
 
-        # Пропускаем доки типа "Выход" для операций на вход
-        if dock and dock.dock_type == models.DockType.exit:
+        # Пропускаем доки неподходящего типа
+        if booking.booking_type == 'in' and dock and dock.dock_type == models.DockType.exit:
+            continue
+        if booking.booking_type == 'out' and dock and dock.dock_type == models.DockType.entrance:
             continue
         
+        # Проверяем, разрешен ли тип перевозки для этого дока
+        if booking.transport_type_id and dock and dock.available_transport_types:
+            allowed_transport_ids = {t.id for t in dock.available_transport_types}
+            if booking.transport_type_id not in allowed_transport_ids:
+                continue # Переходим к следующему доку
+
         # Ищем непрерывную цепочку нужной длины
         for i in range(len(dock_slots) - required_slots + 1):
             chain = dock_slots[i:i + required_slots]

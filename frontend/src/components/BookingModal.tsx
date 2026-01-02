@@ -55,6 +55,7 @@ interface BookingModalProps {
   selectedObject: number | null
   prefillSupplierId?: number | null
   prefillTransportTypeId?: number | null
+  bookingType?: 'in' | 'out'
 }
 
 const BookingModal: React.FC<BookingModalProps> = ({
@@ -65,15 +66,13 @@ const BookingModal: React.FC<BookingModalProps> = ({
   selectedObject,
   prefillSupplierId,
   prefillTransportTypeId,
+  bookingType = 'in',
 }) => {
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
   const [zones, setZones] = useState<Zone[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
   const [docks, setDocks] = useState<Dock[]>([])
-  const [filteredSuppliers, setFilteredSuppliers] = useState<Supplier[]>([])
-  const [supplierSearch, setSupplierSearch] = useState('')
-  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false)
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
   const [allowedVehicleTypes, setAllowedVehicleTypes] = useState<VehicleType[]>([])
   const [duration, setDuration] = useState<number | null>(null)
@@ -114,8 +113,6 @@ const BookingModal: React.FC<BookingModalProps> = ({
         })
         // supplier/transport values may be prefetched; adjust when data arrives
         setSelectedSupplier(null)
-        setSupplierSearch('')
-        setFilteredSuppliers([])
         setDuration(null)
       }
     }
@@ -127,7 +124,6 @@ const BookingModal: React.FC<BookingModalProps> = ({
       const supplier = suppliers.find(s => s.id === prefillSupplierId)
       if (supplier) {
         setSelectedSupplier(supplier)
-        setSupplierSearch(supplier.name)
         setForm(prev => ({ ...prev, supplier_id: supplier.id }))
       }
     }
@@ -143,18 +139,22 @@ const BookingModal: React.FC<BookingModalProps> = ({
   useEffect(() => {
     const supplierTypes = selectedSupplier?.vehicle_types || []
     if (supplierTypes.length > 0) {
-      setAllowedVehicleTypes(supplierTypes.map(v => ({ ...v })))
-      const allowedIds = supplierTypes.map(v => v.id)
-      if (!allowedIds.includes(form.vehicle_type_id)) {
-        setForm(prev => ({ ...prev, vehicle_type_id: supplierTypes[0].id }))
+      const allowedIds = supplierTypes.map(v => v.id);
+      const filteredVehicleTypes = vehicleTypes.filter(v => allowedIds.includes(v.id));
+      setAllowedVehicleTypes(filteredVehicleTypes);
+      
+      // Set a default vehicle_type_id if the current one isn't allowed or isn't set
+      if (!form.vehicle_type_id || !allowedIds.includes(form.vehicle_type_id)) {
+        setForm(prev => ({ ...prev, vehicle_type_id: filteredVehicleTypes.length > 0 ? filteredVehicleTypes[0].id : 0 }));
       }
     } else {
-      setAllowedVehicleTypes(vehicleTypes)
+      // If supplier has no specific vehicle types, allow all
+      setAllowedVehicleTypes(vehicleTypes);
       if (form.vehicle_type_id === 0 && vehicleTypes.length > 0) {
-        setForm(prev => ({ ...prev, vehicle_type_id: vehicleTypes[0].id }))
+         setForm(prev => ({ ...prev, vehicle_type_id: 0 }));
       }
     }
-  }, [selectedSupplier, vehicleTypes, form.vehicle_type_id])
+  }, [selectedSupplier, vehicleTypes]);
 
   useEffect(() => {
     const fetchDuration = async () => {
@@ -177,24 +177,10 @@ const BookingModal: React.FC<BookingModalProps> = ({
     fetchDuration();
   }, [selectedObject, form.vehicle_type_id, form.supplier_id, form.transport_type_id]);
   
-  useEffect(() => {
-    if (supplierSearch.trim() === '') {
-      setFilteredSuppliers([])
-    } else {
-      const filtered = suppliers.filter(supplier =>
-        supplier.name.toLowerCase().includes(supplierSearch.toLowerCase())
-      )
-      setFilteredSuppliers(filtered)
-    }
-  }, [supplierSearch, suppliers])
-
   const loadVehicleTypes = async () => {
     try {
       const { data } = await axios.get<VehicleType[]>(`${API_BASE}/api/vehicle-types/`)
       setVehicleTypes(data)
-      if (data.length > 0) {
-        setForm(prev => ({ ...prev, vehicle_type_id: data[0].id }))
-      }
     } catch (e: any) {
       setError('Не удалось загрузить типы ТС')
     }
@@ -213,7 +199,8 @@ const BookingModal: React.FC<BookingModalProps> = ({
     try {
       const token = localStorage.getItem('token')
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const { data } = await axios.get<Supplier[]>(`${API_BASE}/api/suppliers/my`, { headers })
+      // Fetch all suppliers to find 'Аскона'
+      const { data } = await axios.get<Supplier[]>(`${API_BASE}/api/suppliers/`, { headers })
       setSuppliers(data)
     } catch (e: any) {
       console.error('Ошибка загрузки поставщиков:', e)
@@ -238,33 +225,10 @@ const BookingModal: React.FC<BookingModalProps> = ({
     }
   }
 
-  const handleSupplierSelect = (supplier: Supplier) => {
-    setSelectedSupplier(supplier)
-    setSupplierSearch(supplier.name)
-    setForm(prev => ({ ...prev, supplier_id: supplier.id }))
-    setShowSupplierDropdown(false)
-  }
-
-  const handleSupplierSearchChange = (value: string) => {
-    setSupplierSearch(value)
-    setShowSupplierDropdown(true)
-    if (value === '') {
-      setSelectedSupplier(null)
-      setForm(prev => ({ ...prev, supplier_id: undefined }))
-    }
-  }
-
-  const handleClickOutside = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      setShowSupplierDropdown(false)
-    }
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.vehicle_type_id) {
-      setError('Выберите тип ТС')
-      return
+        // Since it's optional, we don't block submission
     }
 
     setLoading(true)
@@ -274,8 +238,10 @@ const BookingModal: React.FC<BookingModalProps> = ({
       const token = localStorage.getItem('token')
       const bookingData = {
         ...form,
+        vehicle_type_id: form.vehicle_type_id === 0 ? null : form.vehicle_type_id,
         zone_id: selectedSupplier?.zone_id,
         object_id: selectedObject,
+        booking_type: bookingType,
       }
       
       await axios.post(`${API_BASE}/api/bookings/`, bookingData, {
@@ -325,18 +291,29 @@ const BookingModal: React.FC<BookingModalProps> = ({
 
           <form onSubmit={handleSubmit} className="form-grid">
             <div className="field">
-              <label>Тип ТС</label>
-              <select 
-                value={form.vehicle_type_id} 
-                onChange={e => setForm({ ...form, vehicle_type_id: Number(e.target.value) })}
-              >
-                <option value={0}>Выберите тип</option>
-                {allowedVehicleTypes.map(vt => (
-                  <option key={vt.id} value={vt.id}>{vt.name} ({vt.duration_minutes} мин)</option>
-                ))}
-              </select>
+              <label>Транспортный лист *</label>
+              <input
+                type="text"
+                value={form.transport_sheet || ''}
+                onChange={e => setForm({ ...form, transport_sheet: e.target.value })}
+                placeholder="Номер листа"
+                maxLength={20}
+                required
+              />
             </div>
 
+            <div className="field">
+              <label>Объем, м³ *</label>
+              <input
+                type="number"
+                step="0.01"
+                value={form.cubes || ''}
+                onChange={e => setForm({ ...form, cubes: e.target.value ? parseFloat(e.target.value) : undefined })}
+                placeholder="0.00"
+                required
+              />
+            </div>
+            
             <div className="field">
               <label>Госномер</label>
               <input
@@ -367,94 +344,33 @@ const BookingModal: React.FC<BookingModalProps> = ({
               />
             </div>
 
-            <div className="field" style={{ position: 'relative' }}>
-              <label>Поставщик</label>
-              <input
-                type="text"
-                value={supplierSearch}
-                onChange={e => handleSupplierSearchChange(e.target.value)}
-                onFocus={() => setShowSupplierDropdown(true)}
-                placeholder="Начните вводить название"
-              />
-              {showSupplierDropdown && filteredSuppliers.length > 0 && (
-                <div style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  right: 0,
-                  backgroundColor: 'white',
-                  border: '1px solid #e5e7eb',
-                  borderTop: 'none',
-                  borderRadius: '0 0 8px 8px',
-                  maxHeight: '200px',
-                  overflowY: 'auto',
-                  zIndex: 1000
-                }}>
-                  {filteredSuppliers.map(supplier => (
-                    <div
-                      key={supplier.id}
-                      onClick={() => handleSupplierSelect(supplier)}
-                      style={{
-                        padding: '10px 12px',
-                        cursor: 'pointer',
-                        borderBottom: '1px solid #f3f4f6'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
-                    >
-                      {supplier.name}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {selectedSupplier && (
-                <div className="hint" style={{ marginTop: 4 }}>
-                  Выбран: {selectedSupplier.name}
-                  {selectedSupplier.zone_id && (
-                    <span style={{ marginLeft: 6 }}>
-                      (Зона: {zones.find(z => z.id === selectedSupplier.zone_id)?.name || '—'})
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-
+            {selectedSupplier && (
+              <div className="field">
+                <label>Поставщик</label>
+                <input
+                  type="text"
+                  value={selectedSupplier.name}
+                  disabled
+                  style={{ backgroundColor: '#e9ecef', cursor: 'not-allowed' }}
+                />
+              </div>
+            )}
+            
             <div className="field">
-              <label>Тип перевозки</label>
+              <label>Тип ТС</label>
               <select 
-                value={form.transport_type_id || ''} 
-                onChange={e => setForm({ ...form, transport_type_id: e.target.value ? Number(e.target.value) : undefined })}
+                value={form.vehicle_type_id || 0} 
+                onChange={e => setForm({ ...form, vehicle_type_id: Number(e.target.value) })}
               >
-                <option value="">Выберите тип</option>
-                {transportTypes.map(transportType => (
-                  <option key={transportType.id} value={transportType.id}>
-                    {transportType.name}
-                  </option>
+                <option value={0}>- не выбрано -</option>
+                {allowedVehicleTypes.map(vt => (
+                  <option key={vt.id} value={vt.id}>{vt.name}</option>
                 ))}
               </select>
             </div>
-
-            <div className="field">
-              <label>Объем, м³</label>
-              <input
-                type="number"
-                step="0.01"
-                value={form.cubes || ''}
-                onChange={e => setForm({ ...form, cubes: e.target.value ? parseFloat(e.target.value) : undefined })}
-                placeholder="0.00"
-              />
-            </div>
-
-            <div className="field">
-              <label>Транспортный лист</label>
-              <input
-                type="text"
-                value={form.transport_sheet || ''}
-                onChange={e => setForm({ ...form, transport_sheet: e.target.value })}
-                placeholder="Номер листа"
-                maxLength={20}
-              />
-            </div>
+            
+            {/* Hidden transport type for submission */}
+            <input type="hidden" value={form.transport_type_id || ''} />
 
             <div className="form-footer">
               <button className="btn-ghost" type="button" onClick={onClose}>

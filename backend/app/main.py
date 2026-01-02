@@ -3,6 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from .db import engine, Base
 from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics, objects, prr_limits, backups
 
+import logging
+
+# Set up logging for SQLAlchemy
+logging.basicConfig()
+logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+
 app = FastAPI(title="YMS Backend")
 
 # CORS for frontend dev

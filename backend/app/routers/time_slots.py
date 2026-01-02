@@ -18,20 +18,23 @@ def list_time_slots(
     object_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
     transport_type_id: Optional[int] = None,
-    booking_type: Optional[str] = None, # "in" or "out"
+    dock_types: Optional[str] = Query(None, description="Comma-separated list of dock types (e.g., 'exit,universal')"),
     db: Session = Depends(get_db),
 ):
-    """?????>???????'?? ???>???'?< ???>?? ?????>???????????? (???+???????>?????????? ????????????)"""
+    """Получить список свободных временных слотов (календарь бронирований)"""
     
     docks_query = db.query(models.Dock.id)
 
     if object_id:
         docks_query = docks_query.filter(models.Dock.object_id == object_id)
 
-    if booking_type == "in":
-        docks_query = docks_query.filter(models.Dock.dock_type.in_([models.DockType.entrance, models.DockType.universal]))
-    elif booking_type == "out":
-        docks_query = docks_query.filter(models.Dock.dock_type.in_([models.DockType.exit, models.DockType.universal]))
+    if dock_types:
+        try:
+            types = [models.DockType(t.strip()) for t in dock_types.split(',') if t.strip()]
+            if types:
+                docks_query = docks_query.filter(models.Dock.dock_type.in_(types))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid dock_type provided: {e}")
 
     if supplier_id:
         supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
@@ -50,8 +53,23 @@ def list_time_slots(
                 models.Dock.available_transport_types.any(models.TransportTypeRef.id == transport_type_id)
             )
         )
-
+    
     dock_ids = [d[0] for d in docks_query.all()]
+
+    # Fallback: If no docks match the specific transport type, show all docks for the given object and dock types
+    if not dock_ids and transport_type_id:
+        fallback_query = db.query(models.Dock.id)
+        if object_id:
+            fallback_query = fallback_query.filter(models.Dock.object_id == object_id)
+        if dock_types:
+            try:
+                types = [models.DockType(t.strip()) for t in dock_types.split(',') if t.strip()]
+                if types:
+                    fallback_query = fallback_query.filter(models.Dock.dock_type.in_(types))
+            except ValueError:
+                pass # Ignore invalid dock types in fallback
+        
+        dock_ids = [d[0] for d in fallback_query.all()]
 
     if not dock_ids:
         return []

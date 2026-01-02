@@ -124,21 +124,50 @@ const BookingOut: React.FC = () => {
         fetchSuppliers();
         fetchDocks();
     }, []);
+
+    // Load last selected values from localStorage
+    useEffect(() => {
+        const lastObject = localStorage.getItem('lastSelectedObject_BookingOut');
+        const lastTransportType = localStorage.getItem('lastSelectedTransportType_BookingOut');
+        if (lastObject) {
+            setSelectedObject(Number(lastObject));
+        }
+        if (lastTransportType) {
+            setSelectedTransportType(Number(lastTransportType));
+        }
+    }, []);
+
+    // Auto-search and save to localStorage
+    useEffect(() => {
+        if (selectedObject && selectedTransportType) {
+            localStorage.setItem('lastSelectedObject_BookingOut', String(selectedObject));
+            localStorage.setItem('lastSelectedTransportType_BookingOut', String(selectedTransportType));
+            handleSearch();
+        }
+    }, [selectedObject, selectedTransportType, range]);
     
-    const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
+    const handleSearch = async () => {
         if (!selectedObject || !selectedTransportType) {
-            alert('Пожалуйста, выберите объект и тип перевозки');
+            // Silently return if not ready to search
             return;
         }
 
-        const currentRange = rangeOverride || range;
-        const viewMode = viewOverride || currentView;
-        const from = format(currentRange.start, 'yyyy-MM-dd');
-        const to = format(currentRange.end, 'yyyy-MM-dd');
-        const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&transport_type_id=${selectedTransportType}&supplier_id=${askonaSupplierId}&booking_type=out`);
+        const from = format(range.start, 'yyyy-MM-dd');
+        const to = format(range.end, 'yyyy-MM-dd');
+        
+        // TODO: Backend should be updated to handle these filters
+        const params = {
+            from_date: from,
+            to_date: to,
+            object_id: selectedObject,
+            transport_type_id: selectedTransportType,
+            dock_types: ['exit', 'universal'].join(','),
+        };
+
+        const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots`, { params });
         const evts: EventItem[] = [];
 
-        for (let d = new Date(currentRange.start); d <= currentRange.end; d = new Date(d.getTime() + 86400000)) {
+        for (let d = new Date(range.start); d <= range.end; d = new Date(d.getTime() + 86400000)) {
             const dow = d.getDay() === 0 ? 6 : d.getDay() - 1;
             const daySlots = data.filter(s => s.day_of_week === dow);
 
@@ -343,7 +372,6 @@ const BookingOut: React.FC = () => {
                         ))}
                     </select>
                 </div>
-                <button onClick={handleSearch}>Запланировать отгрузку</button>
             </div>
 
             <div className="inline-actions" style={{ marginTop: 12 }}>
@@ -390,7 +418,9 @@ const BookingOut: React.FC = () => {
             selectedSlot={selectedSlot}
             onBookingSuccess={handleBookingSuccess}
             selectedObject={selectedObject}
+            prefillSupplierId={askonaSupplierId}
             prefillTransportTypeId={selectedTransportType}
+            bookingType="out"
         />
     </div>
 );
