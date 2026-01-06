@@ -5,8 +5,11 @@ from .routers import docks, vehicle_types, auth, work_schedules, time_slots, boo
 
 import logging
 
-# Set up logging for SQLAlchemy
-logging.basicConfig()
+# Set up logging with timestamp
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
 app = FastAPI(title="YMS Backend")

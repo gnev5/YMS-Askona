@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import axios from 'axios'
 import { format } from 'date-fns'
 
@@ -90,6 +90,13 @@ const BookingModal: React.FC<BookingModalProps> = ({
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const transportSheetRef = useRef<HTMLInputElement>(null)
+
+  const handleClickOutside = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose()
+    }
+  }
 
   useEffect(() => {
     if (isOpen) {
@@ -114,6 +121,8 @@ const BookingModal: React.FC<BookingModalProps> = ({
         // supplier/transport values may be prefetched; adjust when data arrives
         setSelectedSupplier(null)
         setDuration(null)
+        // Focus on transport sheet field
+        setTimeout(() => transportSheetRef.current?.focus(), 100)
       }
     }
   }, [isOpen, selectedSlot, prefillSupplierId, prefillTransportTypeId])
@@ -142,16 +151,28 @@ const BookingModal: React.FC<BookingModalProps> = ({
       const allowedIds = supplierTypes.map(v => v.id);
       const filteredVehicleTypes = vehicleTypes.filter(v => allowedIds.includes(v.id));
       setAllowedVehicleTypes(filteredVehicleTypes);
-      
+
       // Set a default vehicle_type_id if the current one isn't allowed or isn't set
       if (!form.vehicle_type_id || !allowedIds.includes(form.vehicle_type_id)) {
-        setForm(prev => ({ ...prev, vehicle_type_id: filteredVehicleTypes.length > 0 ? filteredVehicleTypes[0].id : 0 }));
+        if (filteredVehicleTypes.length === 1) {
+          // Auto-select if only one option
+          setForm(prev => ({ ...prev, vehicle_type_id: filteredVehicleTypes[0].id }));
+        } else if (filteredVehicleTypes.length > 0) {
+          setForm(prev => ({ ...prev, vehicle_type_id: filteredVehicleTypes[0].id }));
+        } else {
+          setForm(prev => ({ ...prev, vehicle_type_id: 0 }));
+        }
       }
     } else {
       // If supplier has no specific vehicle types, allow all
       setAllowedVehicleTypes(vehicleTypes);
-      if (form.vehicle_type_id === 0 && vehicleTypes.length > 0) {
-         setForm(prev => ({ ...prev, vehicle_type_id: 0 }));
+      if (!form.vehicle_type_id) {
+        if (vehicleTypes.length === 1) {
+          // Auto-select if only one option
+          setForm(prev => ({ ...prev, vehicle_type_id: vehicleTypes[0].id }));
+        } else {
+          setForm(prev => ({ ...prev, vehicle_type_id: 0 }));
+        }
       }
     }
   }, [selectedSupplier, vehicleTypes]);
@@ -227,8 +248,9 @@ const BookingModal: React.FC<BookingModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.vehicle_type_id) {
-        // Since it's optional, we don't block submission
+    if (!form.vehicle_type_id || form.vehicle_type_id === 0) {
+        setError('Выберите тип ТС')
+        return
     }
 
     setLoading(true)
@@ -242,6 +264,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
         zone_id: selectedSupplier?.zone_id,
         object_id: selectedObject,
         booking_type: bookingType,
+        time_slot_id: selectedSlot?.slotId,
       }
       
       await axios.post(`${API_BASE}/api/bookings/`, bookingData, {
@@ -250,7 +273,15 @@ const BookingModal: React.FC<BookingModalProps> = ({
       onBookingSuccess()
       onClose()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Не получилось сохранить бронь')
+      let errorMsg = 'Не получилось сохранить бронь'
+      if (e.response?.data?.detail) {
+        if (Array.isArray(e.response.data.detail)) {
+          errorMsg = e.response.data.detail.map((d: any) => `${d.loc?.join('.') || 'unknown'}: ${d.msg || JSON.stringify(d)}`).join('; ')
+        } else {
+          errorMsg = e.response.data.detail
+        }
+      }
+      setError(errorMsg)
     } finally {
       setLoading(false)
     }
@@ -293,6 +324,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
             <div className="field">
               <label>Транспортный лист *</label>
               <input
+                ref={transportSheetRef}
                 type="text"
                 value={form.transport_sheet || ''}
                 onChange={e => setForm({ ...form, transport_sheet: e.target.value })}
@@ -357,10 +389,11 @@ const BookingModal: React.FC<BookingModalProps> = ({
             )}
             
             <div className="field">
-              <label>Тип ТС</label>
-              <select 
-                value={form.vehicle_type_id || 0} 
+              <label>Тип ТС *</label>
+              <select
+                value={form.vehicle_type_id || 0}
                 onChange={e => setForm({ ...form, vehicle_type_id: Number(e.target.value) })}
+                required
               >
                 <option value={0}>- не выбрано -</option>
                 {allowedVehicleTypes.map(vt => (

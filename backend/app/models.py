@@ -254,9 +254,9 @@ class Booking(Base):
     vehicle_type_id: Mapped[int] = mapped_column(ForeignKey("vehicle_types.id"), nullable=False)
     
     # Информация о транспорте и водителе
-    vehicle_plate: Mapped[str] = mapped_column(String(20), nullable=False)
-    driver_full_name: Mapped[str] = mapped_column(String(150), nullable=False)
-    driver_phone: Mapped[str] = mapped_column(String(30), nullable=False)
+    vehicle_plate: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    driver_full_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    driver_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     
     # Новые поля
     supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), nullable=True)

@@ -301,6 +301,7 @@ class BookingCreateUpdated(BookingBaseUpdated):
     start_time: str
     object_id: int
     booking_type: str = "in"
+    time_slot_id: Optional[int] = None
 
 class BookingUpdated(BookingBaseUpdated):
     id: int

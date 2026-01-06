@@ -22,7 +22,7 @@ def list_time_slots(
     db: Session = Depends(get_db),
 ):
     """Получить список свободных временных слотов (календарь бронирований)"""
-    
+
     docks_query = db.query(models.Dock.id)
 
     if object_id:
@@ -53,7 +53,7 @@ def list_time_slots(
                 models.Dock.available_transport_types.any(models.TransportTypeRef.id == transport_type_id)
             )
         )
-    
+
     dock_ids = [d[0] for d in docks_query.all()]
 
     # Fallback: If no docks match the specific transport type, show all docks for the given object and dock types
@@ -68,7 +68,7 @@ def list_time_slots(
                     fallback_query = fallback_query.filter(models.Dock.dock_type.in_(types))
             except ValueError:
                 pass # Ignore invalid dock types in fallback
-        
+
         dock_ids = [d[0] for d in fallback_query.all()]
 
     if not dock_ids:
@@ -80,7 +80,7 @@ def list_time_slots(
         models.TimeSlot.is_available == True,
         models.TimeSlot.dock_id.in_(dock_ids)
     ).all()
-    
+
     if not slots:
         return []
 
@@ -145,7 +145,7 @@ def list_time_slots(
                 bookings=bookings_map.get(slot.id, [])
             )
         )
-    
+
     return result
 
 @router.get("/journal")

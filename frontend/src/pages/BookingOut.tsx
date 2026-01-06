@@ -171,7 +171,7 @@ const BookingOut: React.FC = () => {
             const dow = d.getDay() === 0 ? 6 : d.getDay() - 1;
             const daySlots = data.filter(s => s.day_of_week === dow);
 
-            if (viewMode === 'day') {
+            if (currentView === 'day') {
                 daySlots.forEach(slot => {
                     const [sh, sm] = slot.start_time.split(':').map(Number);
                     const [eh, em] = slot.end_time.split(':').map(Number);
@@ -288,16 +288,16 @@ const BookingOut: React.FC = () => {
     const onRangeChange = (r: any) => {
         if (Array.isArray(r) && r.length) {
             setRange({ start: r[0], end: r[r.length - 1] });
-            if (selectedObject && selectedTransportType) handleSearch({ start: r[0], end: r[r.length - 1] }, currentView);
+            if (selectedObject && selectedTransportType) handleSearch();
         } else if (r?.start && r?.end) {
             setRange({ start: r.start, end: r.end });
-            if (selectedObject && selectedTransportType) handleSearch({ start: r.start, end: r.end }, currentView);
+            if (selectedObject && selectedTransportType) handleSearch();
         }
     };
 
     const onViewChange = (v: View) => {
         setCurrentView(v);
-        if (selectedObject && selectedTransportType) handleSearch(range, v);
+        if (selectedObject && selectedTransportType) handleSearch();
     };
 
     const dayPropGetter = (date: Date) => {

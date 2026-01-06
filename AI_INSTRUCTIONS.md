@@ -1,5 +1,7 @@
 # КРИТИЧЕСКИ ВАЖНО: Работа с базой данных
 
+⚠️ **ВАЖНО**: В проекте установлена последняя версия Docker с встроенным Compose. Всегда использовать синтаксис `docker compose` (без тире), а не `docker-compose`.
+
 ⚠️ НИКОГДА не выполнять команды, которые удаляют данные БД без явного подтверждения пользователя:
 - `rebuild_database.py` - УДАЛЯЕТ ВСЕ ДАННЫЕ
 - `docker volume rm` - УДАЛЯЕТ ВСЕ ДАННЫЕ
@@ -15,8 +17,8 @@
 ## Безопасный процесс обновления:
 
 1. `git pull` - загрузить изменения
-2. `docker-compose build` - пересобрать образы
-3. `docker-compose up -d` - перезапустить контейнеры
+2. `docker compose build` - пересобрать образы
+3. `docker compose up -d` - перезапустить контейнеры
 4. Миграции БД применятся автоматически при старте
 
 ## Примеры правильных команд:
@@ -24,11 +26,11 @@
 ```bash
 # Правильно: обновление с сохранением данных
 git pull
-docker-compose build --no-cache
-docker-compose up -d
+docker compose build --no-cache
+docker compose up -d
 
 # Правильно: миграции через Alembic
-docker-compose exec backend alembic upgrade head
+docker compose exec backend alembic upgrade head
 
 # НЕПРАВИЛЬНО: удаляет все данные
 python rebuild_database.py
@@ -45,11 +47,11 @@ docker volume rm yms-askona_db_data
 
 ```bash
 # Проверить статус контейнеров
-docker-compose ps
+docker compose ps
 
 # Посмотреть логи
-docker-compose logs db
-docker-compose logs backend
+docker compose logs db
+docker compose logs backend
 
 # Подключиться к БД
-docker-compose exec db psql -U yms -d yms
+docker compose exec db psql -U yms -d yms

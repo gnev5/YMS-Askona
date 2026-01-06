@@ -32,13 +32,59 @@ def create_booking(
     # Парсим дату и время начала
     booking_date = datetime.strptime(booking_data["booking_date"], "%Y-%m-%d").date()
     start_time = datetime.strptime(booking_data["start_time"], "%H:%M").time()
-    
-    # Находим доступные слоты
-    available_slots = db.query(TimeSlot).filter(
-        TimeSlot.slot_date == booking_date,
-        TimeSlot.start_time >= start_time,
-        TimeSlot.is_available == True
-    ).order_by(TimeSlot.start_time).all()
+
+    # Сначала проверим выбранный слот, если передан
+    chosen_slots = None
+    if "time_slot_id" in booking_data:
+        initial_slot = db.query(TimeSlot).filter(TimeSlot.id == booking_data["time_slot_id"]).first()
+        if initial_slot and initial_slot.is_available and initial_slot.slot_date == booking_date and initial_slot.start_time == start_time:
+            # Получаем слоты для этого дока начиная с выбранного
+            dock_slots = db.query(TimeSlot).filter(
+                TimeSlot.dock_id == initial_slot.dock_id,
+                TimeSlot.slot_date == booking_date,
+                TimeSlot.start_time >= start_time,
+                TimeSlot.is_available == True
+            ).order_by(TimeSlot.start_time).all()
+
+            # Найдем индекс начального слота
+            start_index = None
+            for idx, slot in enumerate(dock_slots):
+                if slot.id == initial_slot.id:
+                    start_index = idx
+                    break
+
+            if start_index is not None and start_index + required_slots <= len(dock_slots):
+                candidate_chain = dock_slots[start_index:start_index + required_slots]
+
+                # Проверим непрерывность
+                is_continuous = True
+                for j in range(len(candidate_chain) - 1):
+                    if candidate_chain[j].end_time != candidate_chain[j + 1].start_time:
+                        is_continuous = False
+                        break
+
+                if is_continuous:
+                    # Проверим доступность
+                    all_available = True
+                    for slot in candidate_chain:
+                        current_occupancy = db.query(func.count(BookingTimeSlot.id)).filter(
+                            BookingTimeSlot.time_slot_id == slot.id
+                        ).scalar() or 0
+                        if current_occupancy >= slot.capacity:
+                            all_available = False
+                            break
+
+                    if all_available:
+                        chosen_slots = candidate_chain
+
+    # Если выбранный слот не подошел, ищем любой доступный
+    if not chosen_slots:
+        # Находим доступные слоты
+        available_slots = db.query(TimeSlot).filter(
+            TimeSlot.slot_date == booking_date,
+            TimeSlot.start_time >= start_time,
+            TimeSlot.is_available == True
+        ).order_by(TimeSlot.start_time).all()
     
     # Группируем слоты по докам
     slots_by_dock = {}
