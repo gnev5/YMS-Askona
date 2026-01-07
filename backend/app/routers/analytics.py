@@ -16,6 +16,8 @@ def get_bookings_by_day(
     end_date: date,
     transport_type_id: int = None,
     supplier_id: int = None,
+    object_id: int = None,
+    dock_type: str = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -33,6 +35,7 @@ def get_bookings_by_day(
         )
         .join(models.BookingTimeSlot, models.BookingTimeSlot.booking_id == models.Booking.id)
         .join(models.TimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id)
+        .join(models.Dock, models.Dock.id == models.TimeSlot.dock_id)
         .filter(
             models.TimeSlot.slot_date >= start_date,
             models.TimeSlot.slot_date <= end_date,
@@ -47,6 +50,14 @@ def get_bookings_by_day(
     # Добавляем фильтр по поставщику, если указан
     if supplier_id is not None:
         query = query.filter(models.Booking.supplier_id == supplier_id)
+    if object_id is not None:
+        query = query.filter(models.Dock.object_id == object_id)
+    if dock_type is not None:
+        try:
+            dock_type_enum = models.DockType(dock_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dock_type")
+        query = query.filter(models.Dock.dock_type == dock_type_enum)
         
     # Группировка и сортировка
     query = query.group_by(cast(models.TimeSlot.slot_date, Date)).order_by(cast(models.TimeSlot.slot_date, Date))
@@ -68,6 +79,8 @@ def get_bookings_by_zone(
     end_date: date,
     transport_type_id: int = None,
     supplier_id: int = None,
+    object_id: int = None,
+    dock_type: str = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -86,6 +99,7 @@ def get_bookings_by_zone(
         .join(models.Booking, models.Booking.zone_id == models.Zone.id)
         .join(models.BookingTimeSlot, models.BookingTimeSlot.booking_id == models.Booking.id)
         .join(models.TimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id)
+        .join(models.Dock, models.Dock.id == models.TimeSlot.dock_id)
         .filter(
             models.TimeSlot.slot_date >= start_date,
             models.TimeSlot.slot_date <= end_date,
@@ -100,6 +114,14 @@ def get_bookings_by_zone(
     # Добавляем фильтр по поставщику, если указан
     if supplier_id is not None:
         query = query.filter(models.Booking.supplier_id == supplier_id)
+    if object_id is not None:
+        query = query.filter(models.Dock.object_id == object_id)
+    if dock_type is not None:
+        try:
+            dock_type_enum = models.DockType(dock_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dock_type")
+        query = query.filter(models.Dock.dock_type == dock_type_enum)
         
     # Группировка и сортировка
     query = query.group_by(models.Zone.name).order_by(func.count(models.Booking.id).desc())

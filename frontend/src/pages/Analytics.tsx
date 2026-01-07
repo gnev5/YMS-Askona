@@ -56,6 +56,11 @@ interface Supplier {
   zone_id?: number;
 }
 
+interface ObjectItem {
+  id: number;
+  name: string;
+}
+
 const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   const [startDate, setStartDate] = useState<string>(
     format(startOfMonth(new Date()), 'yyyy-MM-dd')
@@ -69,13 +74,17 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   const [error, setError] = useState<string | null>(null);
   
   // Новые состояния для фильтров
+  const [objects, setObjects] = useState<ObjectItem[]>([]);
   const [transportTypes, setTransportTypes] = useState<TransportType[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedTransportTypeId, setSelectedTransportTypeId] = useState<string>('');
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [selectedObjectId, setSelectedObjectId] = useState<string>('');
+  const [selectedDockType, setSelectedDockType] = useState<string>('');
 
   // Загрузка справочников при монтировании компонента
   useEffect(() => {
+    loadObjects();
     loadTransportTypes();
     loadSuppliers();
   }, []);
@@ -83,7 +92,24 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   // Загрузка данных при изменении периода или фильтров
   useEffect(() => {
     fetchData();
-  }, [startDate, endDate, selectedTransportTypeId, selectedSupplierId]);
+  }, [startDate, endDate, selectedTransportTypeId, selectedSupplierId, selectedObjectId, selectedDockType]);
+
+  const loadObjects = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const headers = {
+        Authorization: `Bearer ${token}`
+      };
+      
+      const response = await axios.get(
+        `${API_BASE}/api/objects/`,
+        { headers }
+      );
+      setObjects(response.data);
+    } catch (err: any) {
+      console.error('Ошибка загрузки объектов:', err);
+    }
+  };
 
   // Загрузка типов перевозки
   const loadTransportTypes = async () => {
@@ -145,6 +171,12 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
       
       if (selectedSupplierId) {
         params.supplier_id = selectedSupplierId;
+      }
+      if (selectedObjectId) {
+        params.object_id = selectedObjectId;
+      }
+      if (selectedDockType) {
+        params.dock_type = selectedDockType;
       }
       
       // Загрузка данных по дням
@@ -325,6 +357,34 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
                   {supplier.name}
                 </option>
               ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="filter-row">
+          <div className="filter-item">
+            <label>Объект: </label>
+            <select
+              value={selectedObjectId}
+              onChange={(e) => setSelectedObjectId(e.target.value)}
+            >
+              <option value="">Все</option>
+              {objects.map((obj) => (
+                <option key={obj.id} value={obj.id}>
+                  {obj.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="filter-item">
+            <label>Тип (вход/выход): </label>
+            <select
+              value={selectedDockType}
+              onChange={(e) => setSelectedDockType(e.target.value)}
+            >
+              <option value="">Все</option>
+              <option value="entrance">Вход</option>
+              <option value="exit">Выход</option>
             </select>
           </div>
         </div>

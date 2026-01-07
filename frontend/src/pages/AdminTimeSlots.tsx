@@ -73,7 +73,9 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     dock_id: '',
     is_available: '',
     object_id: '',
-    dock_type: ''
+    dock_type: '',
+    start_time_from: '',
+    start_time_to: ''
   })
 
   const token = useMemo(() => localStorage.getItem('token'), [])
@@ -111,6 +113,8 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       if (filters.is_available !== '') params.append('is_available', filters.is_available)
       if (filters.object_id) params.append('object_id', filters.object_id)
       if (filters.dock_type) params.append('dock_type', filters.dock_type)
+      if (filters.start_time_from) params.append('start_time_from', filters.start_time_from)
+      if (filters.start_time_to) params.append('start_time_to', filters.start_time_to)
 
       const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots/journal?${params.toString()}`, { headers })
       setTimeSlots(data)
@@ -369,6 +373,26 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               type="date" 
               value={filters.end_date} 
               onChange={e => setFilters(prev => ({ ...prev, end_date: e.target.value }))}
+              style={{ width: '100%', padding: 8, marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <label>Время с:</label>
+            <input
+              type="time"
+              step={1800}
+              value={filters.start_time_from}
+              onChange={e => setFilters(prev => ({ ...prev, start_time_from: e.target.value }))}
+              style={{ width: '100%', padding: 8, marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <label>Время по:</label>
+            <input
+              type="time"
+              step={1800}
+              value={filters.start_time_to}
+              onChange={e => setFilters(prev => ({ ...prev, start_time_to: e.target.value }))}
               style={{ width: '100%', padding: 8, marginTop: 4 }}
             />
           </div>

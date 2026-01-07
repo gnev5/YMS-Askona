@@ -18,7 +18,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.execute("COMMIT")
-    op.execute("CREATE TYPE objecttype AS ENUM ('warehouse', 'production', 'retail', 'pickup_point', 'other');")
 
     op.create_table('objects',
         sa.Column('id', sa.Integer(), nullable=False),

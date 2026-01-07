@@ -156,6 +156,8 @@ def get_time_slots_journal(
     is_available: Optional[bool] = Query(None, description="Фильтр по доступности"),
     object_id: Optional[int] = Query(None, description="ID объекта"),
     dock_type: Optional[str] = Query(None, description="Тип дока: entrance/exit/universal"),
+    start_time_from: Optional[time] = Query(None, description="Время начала слота с (HH:MM)"),
+    start_time_to: Optional[time] = Query(None, description="Время начала слота по (HH:MM)"),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin)
 ):
@@ -178,6 +180,19 @@ def get_time_slots_journal(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid dock_type")
         query = query.filter(models.Dock.dock_type == dock_type_enum)
+    if start_time_from and start_time_to and start_time_from > start_time_to:
+        raise HTTPException(status_code=400, detail="start_time_from must be before start_time_to")
+    if start_time_from and start_time_to:
+        query = query.filter(
+            and_(
+                models.TimeSlot.start_time < start_time_to,
+                models.TimeSlot.end_time > start_time_from
+            )
+        )
+    elif start_time_from:
+        query = query.filter(models.TimeSlot.end_time > start_time_from)
+    elif start_time_to:
+        query = query.filter(models.TimeSlot.start_time < start_time_to)
     
     slots = query.order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
     

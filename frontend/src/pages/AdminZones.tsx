@@ -26,7 +26,7 @@ const AdminZones: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       const { data } = await axios.get<Zone[]>(`${API_BASE}/api/zones/`)
       setZones(data)
     } catch (e: any) {
-      setError('Ошибка загрузки зон')
+      setError('Не удалось загрузить зоны')
     } finally {
       setLoading(false)
     }
@@ -39,7 +39,7 @@ const AdminZones: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.name.trim()) {
-      setError('Название зоны обязательно')
+      setError('Введите название зоны')
       return
     }
 
@@ -60,7 +60,7 @@ const AdminZones: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       setEditingZone(null)
       loadZones()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка сохранения зоны')
+      setError(e.response?.data?.detail || 'Не удалось сохранить зону')
     } finally {
       setLoading(false)
     }
@@ -72,7 +72,7 @@ const AdminZones: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Вы уверены, что хотите удалить эту зону?')) return
+    if (!confirm('Точно удалить зону?')) return
 
     setLoading(true)
     setError(null)
@@ -81,7 +81,7 @@ const AdminZones: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       setSuccess('Зона удалена')
       loadZones()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка удаления зоны')
+      setError(e.response?.data?.detail || 'Не удалось удалить зону')
     } finally {
       setLoading(false)
     }

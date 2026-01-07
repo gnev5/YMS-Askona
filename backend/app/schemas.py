@@ -284,6 +284,17 @@ class UserSupplier(UserSupplierBase):
     class Config:
         from_attributes = True
 
+
+# Supplier import schemas
+class SupplierImportError(BaseModel):
+    row_number: int
+    message: str
+
+
+class SupplierImportResult(BaseModel):
+    created: int
+    errors: List[SupplierImportError] = []
+
 # Обновленные схемы Booking
 class BookingBaseUpdated(BaseModel):
     vehicle_plate: str
@@ -346,3 +357,14 @@ class PrrLimit(PrrLimitBase):
 
     class Config:
         from_attributes = True
+
+
+# Booking import schemas
+class BookingImportError(BaseModel):
+    row_number: int
+    message: str
+
+
+class BookingImportResult(BaseModel):
+    created: int
+    errors: List[BookingImportError] = []

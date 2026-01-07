@@ -1,32 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { Calendar, dateFnsLocalizer, SlotInfo, View } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay, addDays } from 'date-fns';
-import { ru } from 'date-fns/locale';
-import 'react-big-calendar/lib/css/react-big-calendar.css';
-import BookingModal from '../components/BookingModal';
+import React, { useEffect, useState } from 'react'
+import axios from 'axios'
+import { Calendar, dateFnsLocalizer, SlotInfo, View } from 'react-big-calendar'
+import { format, parse, startOfWeek, getDay, addDays } from 'date-fns'
+import { ru } from 'date-fns/locale'
+import 'react-big-calendar/lib/css/react-big-calendar.css'
+import BookingModal from '../components/BookingModal'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
-const locales = { ru };
+const locales = { ru }
 const localizer = dateFnsLocalizer({
-    format,
-    parse,
-    startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
-    getDay,
-    locales,
-});
+  format,
+  parse,
+  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
+  getDay,
+  locales,
+})
 
-
-interface Object {
-    id: number;
-    name: string;
-    object_type: string;
+interface YmsObject {
+  id: number
+  name: string
+  object_type: string
 }
 
 interface TransportType {
-    id: number;
-    name: string;
+  id: number
+  name: string
 }
 
 interface SlotBookingInfo {
@@ -67,57 +66,51 @@ interface EventItem {
 }
 
 const BookingOut: React.FC = () => {
-    const [objects, setObjects] = useState<Object[]>([]);
-    const [transportTypes, setTransportTypes] = useState<TransportType[]>([]);
-    const [docks, setDocks] = useState<Dock[]>([]);
-    const [selectedObject, setSelectedObject] = useState<number | null>(null);
-    const [selectedTransportType, setSelectedTransportType] = useState<number | null>(null);
-    const [askonaSupplierId, setAskonaSupplierId] = useState<number | null>(null);
-    const [events, setEvents] = useState<EventItem[]>([]);
-    const initialWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-    const [currentDate, setCurrentDate] = useState(new Date());
-    const [currentView, setCurrentView] = useState<View>('week');
-    const [range, setRange] = useState<{ start: Date, end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) });
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null);
-    const filteredDocks = selectedObject
-        ? docks.filter(d => d.object_id === selectedObject && (d.dock_type === 'exit' || d.dock_type === 'universal'))
-        : [];
+  const [objects, setObjects] = useState<YmsObject[]>([])
+  const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
+  const [docks, setDocks] = useState<Dock[]>([])
+  const [selectedObject, setSelectedObject] = useState<number | null>(null)
+  const [selectedTransportType, setSelectedTransportType] = useState<number | null>(null)
+  const [askonaSupplierId, setAskonaSupplierId] = useState<number | null>(null)
+  const [events, setEvents] = useState<EventItem[]>([])
+  const initialWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
+  const [currentDate, setCurrentDate] = useState(new Date())
+  const [currentView, setCurrentView] = useState<View>('week')
+  const [range, setRange] = useState<{ start: Date; end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) })
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null)
+  const filteredDocks = selectedObject ? docks.filter(d => d.object_id === selectedObject && (d.dock_type === 'exit' || d.dock_type === 'universal')) : []
 
-    const formatBookingTooltip = (bookings?: SlotBookingInfo[]) => {
-        if (!bookings || bookings.length === 0) return undefined;
-        const lines = bookings.map((b, idx) => {
-            const transportSheet = b.transport_sheet || 'ne ukazan';
-            const supplier = b.supplier_name || 'ne ukazan';
-            const volume = b.cubes ?? 'ne ukazan';
-            return `${idx + 1}. Transportnyy list: ${transportSheet} - Postavshchik: ${supplier} - Obem: ${volume}`;
-        });
-        return lines.join('\n');
-    };
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importLoading, setImportLoading] = useState(false)
+  const [importResult, setImportResult] = useState<{ created: number; errors: { row_number: number; message: string }[] } | null>(null)
+  const [templateLoading, setTemplateLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-    useEffect(() => {
-        const fetchObjects = async () => {
-            const { data } = await axios.get<Object[]>(`${API_BASE}/api/objects`);
-            setObjects(data.filter(o => o.object_type === 'warehouse'));
-        };
+  const token = localStorage.getItem('token')
+  const headers = token ? { Authorization: `Bearer ${token}` } : {}
 
-        const fetchTransportTypes = async () => {
-            const { data } = await axios.get<TransportType[]>(`${API_BASE}/api/transport-types`);
-            setTransportTypes(data);
-        };
+  const formatBookingTooltip = (bookings?: SlotBookingInfo[]) => {
+    if (!bookings || bookings.length === 0) return undefined
+    const lines = bookings.map((b, idx) => {
+      const transportSheet = b.transport_sheet || 'не указан'
+      const supplier = b.supplier_name || 'не указан'
+      const volume = b.cubes ?? 'не указан'
+      return `${idx + 1}. ТЛ: ${transportSheet} • Поставщик: ${supplier} • Объем: ${volume}`
+    })
+    return lines.join('\n')
+  }
 
-        const fetchSuppliers = async () => {
-            const { data } = await axios.get<any[]>(`${API_BASE}/api/suppliers`);
-            const askona = data.find(s => s.name === 'Аскона');
-            if (askona) {
-                setAskonaSupplierId(askona.id);
-            }
-        };
+  useEffect(() => {
+    const fetchObjects = async () => {
+      const { data } = await axios.get<YmsObject[]>(`${API_BASE}/api/objects`)
+      setObjects(data.filter(o => o.object_type === 'warehouse'))
+    }
 
-        const fetchDocks = async () => {
-            const { data } = await axios.get<Dock[]>(`${API_BASE}/api/docks/`);
-            setDocks(data);
-        };
+    const fetchTransportTypes = async () => {
+      const { data } = await axios.get<TransportType[]>(`${API_BASE}/api/transport-types`)
+      setTransportTypes(data)
+    }
 
         fetchObjects();
         fetchTransportTypes();
@@ -180,110 +173,138 @@ const BookingOut: React.FC = () => {
                     const end = new Date(d);
                     end.setHours(eh, em, 0, 0);
 
-                    const title = `${slot.occupancy}/${slot.capacity}`;
-                    const tooltip = formatBookingTooltip(slot.bookings);
+    const fetchSuppliers = async () => {
+      const { data } = await axios.get<any[]>(`${API_BASE}/api/suppliers`)
+      const askona = data.find(s => s.name === 'Аскона')
+      if (askona) setAskonaSupplierId(askona.id)
+    }
 
-                    evts.push({
-                        id: `slot-${slot.id}-${d.toDateString()}`,
-                        title,
-                        start,
-                        end,
-                        resource: slot,
-                        availableDocks: slot.dock_id ? [slot.dock_id] : [],
-                        resourceId: slot.dock_id,
-                        tooltip,
-                    });
-                });
-            } else {
-                const slotGroups = new Map<string, TimeSlot[]>();
-                daySlots.forEach(slot => {
-                    const timeKey = `${slot.start_time}-${slot.end_time}`;
-                    if (!slotGroups.has(timeKey)) {
-                        slotGroups.set(timeKey, []);
-                    }
-                    slotGroups.get(timeKey)!.push(slot);
-                });
+    const fetchDocks = async () => {
+      const { data } = await axios.get<Dock[]>(`${API_BASE}/api/docks/`)
+      setDocks(data)
+    }
 
-                slotGroups.forEach((slots, timeKey) => {
-                    if (slots.length === 0) return;
+    fetchObjects()
+    fetchTransportTypes()
+    fetchSuppliers()
+    fetchDocks()
+  }, [])
 
-                    const [sh, sm] = slots[0].start_time.split(':').map(Number);
-                    const [eh, em] = slots[0].end_time.split(':').map(Number);
-                    const start = new Date(d);
-                    start.setHours(sh, sm, 0, 0);
-                    const end = new Date(d);
-                    end.setHours(eh, em, 0, 0);
+  useEffect(() => {
+    if (selectedObject && selectedTransportType) handleSearch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedObject, selectedTransportType])
 
-                    const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0);
-                    const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0);
+  const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
+    if (!selectedObject || !selectedTransportType) return
 
-                    let status: 'free' | 'partial' | 'full' = 'free';
-                    if (totalOccupancy === 0) {
-                        status = 'free';
-                    } else if (totalOccupancy < totalCapacity) {
-                        status = 'partial';
-                    } else {
-                        status = 'full';
-                    }
+    const currentRange = rangeOverride || range
+    const viewMode = viewOverride || currentView
+    const from = format(currentRange.start, 'yyyy-MM-dd')
+    const to = format(currentRange.end, 'yyyy-MM-dd')
+    const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&transport_type_id=${selectedTransportType}&supplier_id=${askonaSupplierId}&booking_type=out`)
+    const evts: EventItem[] = []
 
-                    const title = `${totalOccupancy}/${totalCapacity}`;
+    for (let d = new Date(currentRange.start); d <= currentRange.end; d = new Date(d.getTime() + 86400000)) {
+      const dow = d.getDay() === 0 ? 6 : d.getDay() - 1
+      const daySlots = data.filter(s => s.day_of_week === dow)
 
-                    const combinedResource: TimeSlot = {
-                        id: slots[0].id,
-                        day_of_week: slots[0].day_of_week,
-                        start_time: slots[0].start_time,
-                        end_time: slots[0].end_time,
-                        capacity: totalCapacity,
-                        occupancy: totalOccupancy,
-                        status,
-                    };
+      if (viewMode === 'day') {
+        daySlots.forEach(slot => {
+          const [sh, sm] = slot.start_time.split(':').map(Number)
+          const [eh, em] = slot.end_time.split(':').map(Number)
+          const start = new Date(d)
+          start.setHours(sh, sm, 0, 0)
+          const end = new Date(d)
+          end.setHours(eh, em, 0, 0)
 
-                    const availableDocks = slots
-                        .filter(slot => slot.occupancy < slot.capacity)
-                        .map(slot => slot.dock_id)
-                        .filter((id): id is number => typeof id === 'number');
+          const title = `${slot.occupancy}/${slot.capacity}`
+          const tooltip = formatBookingTooltip(slot.bookings)
 
-                    evts.push({
-                        id: `combined-${timeKey}-${d.toDateString()}`,
-                        title,
-                        start,
-                        end,
-                        resource: combinedResource,
-                        availableDocks,
-                    });
-                });
-            }
-        }
-        setEvents(evts);
-    };
+          evts.push({
+            id: `slot-${slot.id}-${d.toDateString()}`,
+            title,
+            start,
+            end,
+            resource: slot,
+            availableDocks: slot.dock_id ? [slot.dock_id] : [],
+            resourceId: slot.dock_id,
+            tooltip,
+          })
+        })
+      } else {
+        const slotGroups = new Map<string, TimeSlot[]>()
+        daySlots.forEach(slot => {
+          const timeKey = `${slot.start_time}-${slot.end_time}`
+          if (!slotGroups.has(timeKey)) slotGroups.set(timeKey, [])
+          slotGroups.get(timeKey)!.push(slot)
+        })
 
-    const onSelectSlot = (slotInfo: SlotInfo) => {
-        const match = events.find(e => 
-          e.start.getTime() === slotInfo.start.getTime() && 
-          e.end.getTime() === slotInfo.end.getTime() &&
-          (!slotInfo.resourceId || e.resourceId === slotInfo.resourceId)
-        );
-        if (match) openModalForEvent(match);
-    };
+        slotGroups.forEach((slots, timeKey) => {
+          if (!slots.length) return
+          const [sh, sm] = slots[0].start_time.split(':').map(Number)
+          const [eh, em] = slots[0].end_time.split(':').map(Number)
+          const start = new Date(d)
+          start.setHours(sh, sm, 0, 0)
+          const end = new Date(d)
+          end.setHours(eh, em, 0, 0)
 
-    const openModalForEvent = (evt: EventItem) => {
-        if (String(evt.resource.status).toLowerCase() === 'full') return;
-        setSelectedSlot({
-            start: evt.start,
-            end: evt.end,
-            slotId: evt.resource.id,
-            availableDocks: evt.availableDocks
-        });
-        setIsModalOpen(true);
-    };
+          const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0)
+          const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0)
+          let status: 'free' | 'partial' | 'full' = 'free'
+          if (totalOccupancy === 0) status = 'free'
+          else if (totalOccupancy < totalCapacity) status = 'partial'
+          else status = 'full'
 
-    const handleBookingSuccess = () => {
-        handleSearch();
-    };
+          const title = `${totalOccupancy}/${totalCapacity}`
+          const combinedResource: TimeSlot = {
+            id: slots[0].id,
+            day_of_week: slots[0].day_of_week,
+            start_time: slots[0].start_time,
+            end_time: slots[0].end_time,
+            capacity: totalCapacity,
+            occupancy: totalOccupancy,
+            status,
+          }
+          const availableDocks = slots.filter(s => s.occupancy < s.capacity).map(s => s.dock_id).filter((id): id is number => typeof id === 'number')
+          evts.push({ id: `combined-${timeKey}-${d.toDateString()}`, title, start, end, resource: combinedResource, availableDocks })
+        })
+      }
+    }
+    setEvents(evts)
+  }
 
-    const goToDate = (date: Date) => {
-        setCurrentDate(date);
-    };
+  const onSelectSlot = (slotInfo: SlotInfo) => {
+    const match = events.find(e =>
+      e.start.getTime() === slotInfo.start.getTime() &&
+      e.end.getTime() === slotInfo.end.getTime() &&
+      (!slotInfo.resourceId || e.resourceId === slotInfo.resourceId)
+    )
+    if (match) openModalForEvent(match)
+  }
+
+  const openModalForEvent = (evt: EventItem) => {
+    if (String(evt.resource.status).toLowerCase() === 'full') return
+    setSelectedSlot({ start: evt.start, end: evt.end, slotId: evt.resource.id, availableDocks: evt.availableDocks })
+    setIsModalOpen(true)
+  }
+
+  const handleBookingSuccess = () => {
+    handleSearch()
+  }
+
+  const goToDate = (date: Date) => setCurrentDate(date)
+
+  const onRangeChange = (r: any) => {
+    if (Array.isArray(r) && r.length) {
+      setRange({ start: r[0], end: r[r.length - 1] })
+      if (selectedObject && selectedTransportType) handleSearch({ start: r[0], end: r[r.length - 1] }, currentView)
+    } else if (r?.start && r?.end) {
+      setRange({ start: r.start, end: r.end })
+      if (selectedObject && selectedTransportType) handleSearch({ start: r.start, end: r.end }, currentView)
+    }
+  }
+
 
     const onRangeChange = (r: any) => {
         if (Array.isArray(r) && r.length) {
@@ -300,45 +321,45 @@ const BookingOut: React.FC = () => {
         if (selectedObject && selectedTransportType) handleSearch();
     };
 
-    const dayPropGetter = (date: Date) => {
-        const today = new Date();
-        const recommendedDate = addDays(today, 7);
-        if (date.getDate() === recommendedDate.getDate() && date.getMonth() === recommendedDate.getMonth() && date.getFullYear() === recommendedDate.getFullYear()) {
-            return {
-                className: 'recommended-day',
-            };
-        }
-        return {};
-    };
+  const onViewChange = (v: View) => {
+    setCurrentView(v)
+    if (selectedObject && selectedTransportType) handleSearch(range, v)
+  }
 
-    const eventPropGetter = (event: EventItem) => {
-        const status = String(event.resource.status || '').toLowerCase();
-        let bg = '#e6ffed';
-        let border = '#22c55e';
-        let cursor = 'pointer';
-        let title = event.tooltip || 'Svobodno';
+  const dayPropGetter = (date: Date) => {
+    const today = new Date()
+    const recommendedDate = addDays(today, 7)
+    if (date.getDate() === recommendedDate.getDate() && date.getMonth() === recommendedDate.getMonth() && date.getFullYear() === recommendedDate.getFullYear()) {
+      return { className: 'recommended-day' }
+    }
+    return {}
+  }
 
-        if (status === 'partial') {
-            bg = '#fff7e6';
-            border = '#f59e0b';
-            if (!event.tooltip) title = 'Chastichno zanyato';
-        } else if (status === 'full') {
-            bg = '#ffe6e6';
-            border = '#ef4444';
-            cursor = 'not-allowed';
-            if (!event.tooltip) title = 'Nedostupno';
-        }
-        
-        return {
-            style: {
-                backgroundColor: bg,
-                borderLeft: `4px solid ${border}`,
-                cursor: cursor,
-                color: '#1e3a8a'
-            },
-            title: title
-        };
-    };
+
+  const eventPropGetter = (event: EventItem) => {
+    const status = String(event.resource.status || '').toLowerCase()
+    let bg = '#e6ffed'
+    let border = '#22c55e'
+    let cursor = 'pointer'
+    let title = event.tooltip || 'Свободно'
+
+    if (status === 'partial') {
+      bg = '#fff7e6'
+      border = '#f59e0b'
+      if (!event.tooltip) title = 'Частично занято'
+    } else if (status === 'full') {
+      bg = '#ffe6e6'
+      border = '#ef4444'
+      cursor = 'not-allowed'
+      if (!event.tooltip) title = 'Недоступно'
+    }
+
+    return {
+      style: { backgroundColor: bg, borderLeft: `4px solid ${border}`, cursor, color: '#1e3a8a' },
+      title,
+    }
+  }
+
 
     return (
         <div>
@@ -374,11 +395,55 @@ const BookingOut: React.FC = () => {
                 </div>
             </div>
 
-            <div className="inline-actions" style={{ marginTop: 12 }}>
-                <button className="btn-secondary" onClick={() => goToDate(new Date())}>Сегодня</button>
-                <button className="btn-secondary" onClick={() => goToDate(addDays(new Date(), 1))}>Завтра</button>
-                <button className="btn-secondary" onClick={() => goToDate(addDays(new Date(), 7))}>Через неделю</button>
-            </div>
+  const handleDownloadTemplate = async () => {
+    setError(null)
+    setTemplateLoading(true)
+    try {
+      const { data } = await axios.get(`${API_BASE}/api/bookings/import/template?direction=out`, {
+        headers,
+        responseType: 'blob',
+      })
+      const blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'booking_import_out.xlsx'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Не удалось скачать шаблон')
+    } finally {
+      setTemplateLoading(false)
+    }
+  }
+
+
+  const handleImport = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setImportResult(null)
+    if (!importFile) {
+      setError('Выберите файл для импорта')
+      return
+    }
+    setImportLoading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFile)
+      const { data } = await axios.post(`${API_BASE}/api/bookings/import?direction=out`, formData, {
+        headers: { ...headers, 'Content-Type': 'multipart/form-data' },
+      })
+      setImportResult(data)
+      handleSearch()
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Не удалось выполнить импорт')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
 
             <div className="calendar-shell" style={{ marginTop: 12 }}>
                 <Calendar
@@ -421,10 +486,108 @@ const BookingOut: React.FC = () => {
             prefillSupplierId={askonaSupplierId}
             prefillTransportTypeId={selectedTransportType}
             bookingType="out"
+
+  return (
+    <div>
+      <h1>Выход (отгрузка)</h1>
+      {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+
+      <form onSubmit={handleImport} style={{ marginBottom: 12, padding: 12, border: '1px dashed #d1d5db', borderRadius: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="button" className="btn-secondary" onClick={handleDownloadTemplate} disabled={templateLoading}>
+            {templateLoading ? 'Скачиваем...' : 'Скачать шаблон'}
+          </button>
+          <input type="file" accept=".xlsx,.xlsm" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
+          <button type="submit" disabled={importLoading}>{importLoading ? 'Импорт...' : 'Загрузить Excel'}</button>
+        </div>
+        {importResult && (
+          <div style={{ marginTop: 8, fontSize: 14 }}>
+            <div>Добавлено: {importResult.created}</div>
+            {importResult.errors.length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                Ошибки:
+                <ul style={{ margin: 4, paddingLeft: 16 }}>
+                  {importResult.errors.map(err => (
+                    <li key={err.row_number}>Строка {err.row_number}: {err.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </form>
+
+      <div className="form-grid">
+        <div className="field">
+          <label>Объект</label>
+          <select value={selectedObject || ''} onChange={(e) => setSelectedObject(Number(e.target.value))}>
+            <option value="" disabled>Выберите объект</option>
+            {objects.map(obj => (
+              <option key={obj.id} value={obj.id}>{obj.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Тип перевозки</label>
+          <select value={selectedTransportType || ''} onChange={(e) => setSelectedTransportType(Number(e.target.value))}>
+            <option value="" disabled>Выберите тип перевозки</option>
+            {transportTypes.map(tt => (
+              <option key={tt.id} value={tt.id}>{tt.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="inline-actions" style={{ marginTop: 12 }}>
+        <button className="btn-secondary" onClick={() => goToDate(new Date())}>Сегодня</button>
+        <button className="btn-secondary" onClick={() => goToDate(addDays(new Date(), 1))}>Завтра</button>
+        <button className="btn-secondary" onClick={() => goToDate(addDays(new Date(), 7))}>Через неделю</button>
+      </div>
+
+      <div className="calendar-shell" style={{ marginTop: 12 }}>
+        <Calendar
+          localizer={localizer}
+          events={events}
+          startAccessor="start"
+          endAccessor="end"
+          style={{ height: 'calc(100vh - 340px)' }}
+          selectable
+          step={30}
+          timeslots={1}
+          views={['week', 'day']}
+          defaultView={'week' as any}
+          defaultDate={initialWeekStart}
+          date={currentDate}
+          view={currentView}
+          onNavigate={(newDate) => setCurrentDate(newDate)}
+          onSelectSlot={onSelectSlot}
+          onSelectEvent={openModalForEvent as any}
+          onRangeChange={onRangeChange as any}
+          onView={onViewChange as any}
+          resources={currentView === 'day' ? filteredDocks : undefined}
+          resourceIdAccessor="id"
+          resourceTitleAccessor="name"
+          tooltipAccessor="tooltip"
+          dayPropGetter={dayPropGetter}
+          eventPropGetter={eventPropGetter}
+          culture="ru"
+
         />
+      </div>
+
+      <BookingModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false)
+          setSelectedSlot(null)
+        }}
+        selectedSlot={selectedSlot}
+        onBookingSuccess={handleBookingSuccess}
+        selectedObject={selectedObject}
+        prefillTransportTypeId={selectedTransportType}
+      />
     </div>
-);
-};
+  )
+}
 
-
-export default BookingOut;
+export default BookingOut

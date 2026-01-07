@@ -34,6 +34,10 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
   const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
   const [loading, setLoading] = useState(false)
+  const [templateLoading, setTemplateLoading] = useState(false)
+  const [importLoading, setImportLoading] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importResult, setImportResult] = useState<{ created: number; errors: { row_number: number; message: string }[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null)
@@ -95,13 +99,42 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     loadSuppliers()
     loadZones()
     loadVehicleTypes()
+
     loadTransportTypes()
+
+
+
   }, [])
+
+  const handleDownloadTemplate = async () => {
+    setError(null)
+    setSuccess(null)
+    setTemplateLoading(true)
+    try {
+      const { data } = await axios.get(`${API_BASE}/api/suppliers/import/template`, {
+        headers,
+        responseType: 'blob',
+      })
+      const blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'supplier_import_template.xlsx'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Не удалось скачать шаблон')
+    } finally {
+      setTemplateLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.name.trim()) {
-      setError('Название поставщика обязательно')
+      setError('Введите название поставщика')
       return
     }
     if (!formData.zone_id) {
@@ -116,7 +149,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     try {
       if (editingSupplier) {
         await axios.put(`${API_BASE}/api/suppliers/${editingSupplier.id}`, formData, { headers })
-        setSuccess('Поставщик обновлен')
+        setSuccess('Поставщик обновлён')
       } else {
         await axios.post(`${API_BASE}/api/suppliers/`, formData, { headers })
         setSuccess('Поставщик создан')
@@ -125,9 +158,35 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       handleCancel()
       loadSuppliers()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка сохранения поставщика')
+      setError(e.response?.data?.detail || 'Не удалось сохранить поставщика')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleImport = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setSuccess(null)
+    setImportResult(null)
+    if (!importFile) {
+      setError('Выберите файл для импорта')
+      return
+    }
+    setImportLoading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFile)
+      const { data } = await axios.post(`${API_BASE}/api/suppliers/import`, formData, {
+        headers: { ...headers, 'Content-Type': 'multipart/form-data' },
+      })
+      setImportResult(data)
+      setSuccess(`Импорт завершён: добавлено ${data.created}, ошибок ${data.errors.length}`)
+      loadSuppliers()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Не удалось выполнить импорт')
+    } finally {
+      setImportLoading(false)
     }
   }
 
@@ -149,10 +208,10 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     setError(null)
     try {
       await axios.delete(`${API_BASE}/api/suppliers/${id}`, { headers })
-      setSuccess('Поставщик удален')
+      setSuccess('Поставщик удалён')
       loadSuppliers()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка удаления поставщика')
+      setError(e.response?.data?.detail || 'Не удалось удалить поставщика')
     } finally {
       setLoading(false)
     }
@@ -169,7 +228,10 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       const exists = currentIds.includes(id)
       return {
         ...prev,
+
         [field]: exists ? currentIds.filter(x => x !== id) : [...currentIds, id],
+        vehicle_type_ids: exists ? prev.vehicle_type_ids.filter(x => x !== id) : [...prev.vehicle_type_ids, id],
+
       }
     })
   }
@@ -179,10 +241,46 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
         <button onClick={onBack}>← Назад</button>
         <h2>Управление поставщиками</h2>
+        <div style={{ marginLeft: 'auto' }}>
+          <button onClick={handleDownloadTemplate} disabled={templateLoading}>
+            {templateLoading ? 'Скачиваем...' : 'Скачать шаблон импорта'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
       {success && <div className="success" style={{ marginBottom: 16 }}>{success}</div>}
+
+      <form onSubmit={handleImport} style={{ marginBottom: 16, padding: 12, border: '1px dashed #d1d5db', borderRadius: 8 }}>
+        <h3>Импорт поставщиков из Excel</h3>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 8 }}>
+          <input
+            type="file"
+            accept=".xlsx,.xlsm"
+            onChange={e => setImportFile(e.target.files?.[0] || null)}
+          />
+          <button type="submit" disabled={importLoading}>
+            {importLoading ? 'Импорт...' : 'Загрузить файл'}
+          </button>
+        </div>
+        {importResult && (
+          <div style={{ marginTop: 8, fontSize: 14 }}>
+            <div>Добавлено: {importResult.created}</div>
+            {importResult.errors.length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                Ошибки:
+                <ul style={{ margin: 4, paddingLeft: 16 }}>
+                  {importResult.errors.map(err => (
+                    <li key={err.row_number}>
+                      Строка {err.row_number}: {err.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </form>
 
       <form onSubmit={handleSubmit} style={{ marginBottom: 24, padding: 16, border: '1px solid #e5e7eb', borderRadius: 8 }}>
         <h3>{editingSupplier ? 'Редактировать поставщика' : 'Добавить поставщика'}</h3>
@@ -202,7 +300,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           <textarea
             value={formData.comment}
             onChange={e => setFormData({ ...formData, comment: e.target.value })}
-            placeholder="Описание или примечание"
+            placeholder="Опишите детали (опционально)"
             rows={3}
             style={{ width: '100%', padding: 8, border: '1px solid #d1d5db', borderRadius: 4 }}
           />
@@ -224,7 +322,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           </select>
         </div>
         <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', marginBottom: 4 }}>Типы ТС (можно несколько):</label>
+          <label style={{ display: 'block', marginBottom: 4 }}>Типы ТС (если нужно):</label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 6 }}>
             {vehicleTypes.map(vt => (
               <label key={vt.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
@@ -257,7 +355,7 @@ const AdminSuppliers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" disabled={loading}>
-            {loading ? 'Сохранение...' : editingSupplier ? 'Сохранить' : 'Создать'}
+            {loading ? 'Сохранение...' : editingSupplier ? 'Обновить' : 'Создать'}
           </button>
           {editingSupplier && (
             <button type="button" onClick={handleCancel}>
