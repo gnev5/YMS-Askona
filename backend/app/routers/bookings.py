@@ -370,3 +370,430 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     db.commit()
     db.refresh(new_booking)
     return new_booking
+@router.put("/{booking_id}/cancel")
+def cancel_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Отменить запись"""
+    booking = db.query(models.Booking).filter(
+        models.Booking.id == booking_id,
+        models.Booking.user_id == current_user.id
+    ).first()
+    
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    if booking.status != "confirmed":
+        raise HTTPException(status_code=400, detail="Booking is not in confirmed status")
+    
+    booking.status = "cancelled"
+    booking.updated_at = datetime.utcnow()
+    
+    # Удаляем связи с временными слотами, чтобы они снова стали доступны
+    db.query(models.BookingTimeSlot).filter(
+        models.BookingTimeSlot.booking_id == booking_id
+    ).delete()
+    
+    db.commit()
+    
+    return {"message": "Booking cancelled successfully"}
+
+@router.get("/all", response_model=List[schemas.BookingWithDetails])
+def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Получить все записи (только для администраторов)"""
+    # Проверяем права администратора
+    if current_user.role != models.UserRole.admin:
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+    
+    bookings = db.query(models.Booking).filter(
+        models.Booking.status == "confirmed"
+    ).order_by(models.Booking.created_at.desc()).all()
+    
+    result = []
+    for booking in bookings:
+        serialized = _serialize_booking(db, booking, include_user=True)
+        if serialized:
+            result.append(serialized)
+    
+    return result
+
+@router.get("/my", response_model=List[schemas.BookingWithDetails])
+def get_my_bookings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Получить мои записи (обновленная версия)"""
+    bookings = db.query(models.Booking).filter(
+        models.Booking.user_id == current_user.id,
+        models.Booking.status == "confirmed"
+    ).order_by(models.Booking.created_at.desc()).all()
+    
+    result = []
+    for booking in bookings:
+        serialized = _serialize_booking(db, booking)
+        if serialized:
+            result.append(serialized)
+    
+    return result
+
+@router.put("/{booking_id}/transport-sheet", response_model=schemas.BookingWithDetails)
+def update_transport_sheet(
+    booking_id: int,
+    payload: schemas.BookingTransportSheetUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Обновить транспортный лист для брони"""
+    query = db.query(models.Booking).filter(models.Booking.id == booking_id)
+    if current_user.role != models.UserRole.admin:
+        query = query.filter(models.Booking.user_id == current_user.id)
+    booking = query.first()
+
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if payload.transport_sheet and len(payload.transport_sheet) > 20:
+        raise HTTPException(status_code=400, detail="Transport sheet must be at most 20 characters")
+
+    booking.transport_sheet = payload.transport_sheet or None
+    booking.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(booking)
+
+    serialized = _serialize_booking(db, booking, include_user=current_user.role == models.UserRole.admin)
+    if not serialized:
+        raise HTTPException(status_code=500, detail="Booking slots not found")
+
+    return serialized
+
+@router.get("/{booking_id}/slots")
+def get_booking_slots(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Получить слоты конкретной записи"""
+    booking = db.query(models.Booking).filter(
+        models.Booking.id == booking_id,
+        models.Booking.user_id == current_user.id
+    ).first()
+    
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    slots = db.query(models.TimeSlot, models.Dock).join(
+        models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
+    ).join(
+        models.Dock, models.TimeSlot.dock_id == models.Dock.id
+    ).filter(models.BookingTimeSlot.booking_id == booking_id).all()
+    
+    result = []
+    for slot, dock in slots:
+        result.append({
+            "id": slot.id,
+            "dock_name": dock.name,
+            "slot_date": slot.slot_date.isoformat(),
+            "start_time": slot.start_time.strftime("%H:%M"),
+            "end_time": slot.end_time.strftime("%H:%M"),
+            "capacity": slot.capacity
+        })
+    
+    return result
+
+@router.delete("/{booking_id}")
+def delete_booking(
+    booking_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Удалить запись (только если она отменена)"""
+    booking = db.query(models.Booking).filter(
+        models.Booking.id == booking_id,
+        models.Booking.user_id == current_user.id
+    ).first()
+    
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    if booking.status == "confirmed":
+        raise HTTPException(status_code=400, detail="Cannot delete confirmed booking. Cancel it first.")
+    
+    # Удаляем связи с слотами
+    db.query(models.BookingTimeSlot).filter(models.BookingTimeSlot.booking_id == booking_id).delete()
+    
+    # Удаляем запись
+    db.delete(booking)
+    db.commit()
+    
+    return {"message": "Booking deleted successfully"}
+
+
+@router.get("/import/template")
+def download_booking_import_template(
+    direction: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    XLSX-шаблон для импорта бронирований. direction: in|out.
+    """
+    dir_normalized = direction.lower()
+    if dir_normalized not in ("in", "out"):
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "bookings"
+    ws.append(["transport_sheet", "supplier_name", "cubes", "booking_date", "start_time", "transport_type", "vehicle_type", "object_name", "driver_full_name", "driver_phone"])
+    ws.append(["TS-001", "ООО Пример", "12.5", "2025-01-10", "09:00", "закупка", "Фура 20'", "Обухово", "Иванов И.И.", "+7 999 000-00-00"])
+
+    ws_sup = wb.create_sheet("suppliers")
+    ws_sup.append(["supplier_name", "zone_name"])
+    suppliers = db.query(models.Supplier).options(joinedload(models.Supplier.zone)).all()
+    for s in suppliers:
+        ws_sup.append([s.name, s.zone.name if s.zone else ""])
+
+    ws_obj = wb.create_sheet("objects")
+    ws_obj.append(["object_name"])
+    for obj in db.query(models.Object).all():
+        ws_obj.append([obj.name])
+
+    ws_tt = wb.create_sheet("transport_types")
+    ws_tt.append(["transport_type"])
+    for t in db.query(models.TransportTypeRef).all():
+        ws_tt.append([t.name])
+
+    ws_vt = wb.create_sheet("vehicle_types")
+    ws_vt.append(["vehicle_type"])
+    for vt in db.query(models.VehicleType).all():
+        ws_vt.append([vt.name])
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="booking_import_template_{dir_normalized}.xlsx"'},
+    )
+
+
+@router.post("/import", response_model=schemas.BookingImportResult)
+def import_bookings_from_excel(
+    direction: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Импорт бронирований из Excel. direction: in|out. Валидные строки создаются, ошибки возвращаются.
+    """
+    dir_normalized = direction.lower()
+    if dir_normalized not in ("in", "out"):
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+
+    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Ожидается Excel файл (.xlsx)")
+
+    try:
+        wb = load_workbook(BytesIO(file.file.read()))
+        ws = wb.active
+    except Exception:
+        raise HTTPException(status_code=400, detail="Не удалось прочитать Excel файл")
+
+    expected_headers = ["transport_sheet", "supplier_name", "cubes", "booking_date", "start_time", "transport_type", "vehicle_type", "object_name", "driver_full_name", "driver_phone"]
+    headers = [str(cell.value).strip() if cell.value is not None else "" for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+    if [h.lower() for h in headers] != expected_headers:
+        raise HTTPException(status_code=400, detail=f"Ожидается заголовок: {', '.join(expected_headers)}")
+
+    suppliers = db.query(models.Supplier).options(joinedload(models.Supplier.zone)).all()
+    supplier_map = {s.name.strip().lower(): s for s in suppliers}
+
+    objects = db.query(models.Object).all()
+    object_map = {o.name.strip().lower(): o for o in objects}
+
+    transport_types = db.query(models.TransportTypeRef).all()
+    transport_type_map = {t.name.strip().lower(): t for t in transport_types}
+
+    vehicle_types = db.query(models.VehicleType).all()
+    vehicle_type_map = {v.name.strip().lower(): v for v in vehicle_types}
+
+    docks = db.query(models.Dock).options(joinedload(models.Dock.available_zones)).all()
+    allowed_types = [models.DockType.universal]
+    if dir_normalized == "in":
+        allowed_types.append(models.DockType.entrance)
+    else:
+        allowed_types.append(models.DockType.exit)
+
+    docks_by_object = {}
+    for d in docks:
+        if d.dock_type not in allowed_types:
+            continue
+        docks_by_object.setdefault(d.object_id, []).append(d)
+    for lst in docks_by_object.values():
+        lst.sort(key=lambda x: x.name or "")
+
+    errors: list[schemas.BookingImportError] = []
+    created = 0
+
+    for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        raw_transport_sheet, raw_supplier, raw_cubes, raw_date, raw_time, raw_transport_type, raw_vehicle_type, raw_object, raw_driver_name, raw_driver_phone = row
+        transport_sheet = (raw_transport_sheet or "").strip()
+        supplier_name = (raw_supplier or "").strip()
+        cubes = None if raw_cubes in (None, "") else float(raw_cubes)
+        booking_date_str = (raw_date or "").strip() if isinstance(raw_date, str) else (raw_date.strftime("%Y-%m-%d") if hasattr(raw_date, "strftime") else "")
+        start_time_str = (raw_time or "").strip() if isinstance(raw_time, str) else (raw_time.strftime("%H:%M") if hasattr(raw_time, "strftime") else "")
+        transport_type_name = (raw_transport_type or "").strip()
+        vehicle_type_name = (raw_vehicle_type or "").strip()
+        object_name = (raw_object or "").strip()
+        driver_name = (raw_driver_name or "").strip()
+        driver_phone = (raw_driver_phone or "").strip()
+
+        row_errors = []
+        if not transport_sheet:
+            row_errors.append("transport_sheet обязателен")
+        if not supplier_name:
+            row_errors.append("supplier_name обязателен")
+        if cubes is None:
+            row_errors.append("cubes обязателен")
+        if not booking_date_str:
+            row_errors.append("booking_date обязателен")
+        if not start_time_str:
+            row_errors.append("start_time обязателен")
+        if not transport_type_name:
+            row_errors.append("transport_type обязателен")
+        if not vehicle_type_name:
+            row_errors.append("vehicle_type обязателен")
+        if not object_name:
+            row_errors.append("object_name обязателен")
+
+        supplier = supplier_map.get(supplier_name.lower()) if supplier_name else None
+        if supplier is None:
+            row_errors.append(f"supplier '{supplier_name}' не найден")
+        zone_id = supplier.zone_id if supplier else None
+
+        obj = object_map.get(object_name.lower()) if object_name else None
+        if obj is None:
+            row_errors.append(f"object '{object_name}' не найден")
+
+        transport_type = transport_type_map.get(transport_type_name.lower()) if transport_type_name else None
+        if transport_type is None:
+            row_errors.append(f"transport_type '{transport_type_name}' не найден")
+
+        vehicle_type = vehicle_type_map.get(vehicle_type_name.lower()) if vehicle_type_name else None
+        if vehicle_type is None:
+            row_errors.append(f"vehicle_type '{vehicle_type_name}' не найден")
+
+        try:
+            booking_date = datetime.strptime(booking_date_str, "%Y-%m-%d").date()
+        except Exception:
+            row_errors.append(f"booking_date '{booking_date_str}' некорректен")
+            booking_date = None
+
+        try:
+            start_time = datetime.strptime(start_time_str, "%H:%M").time()
+        except Exception:
+            row_errors.append(f"start_time '{start_time_str}' некорректен")
+            start_time = None
+
+        if row_errors:
+            errors.append(schemas.BookingImportError(row_number=idx, message="; ".join(row_errors)))
+            continue
+
+        # duration
+        try:
+            duration = get_duration(
+                object_id=obj.id,
+                supplier_id=supplier.id if supplier else None,
+                transport_type_id=transport_type.id if transport_type else None,
+                vehicle_type_id=vehicle_type.id if vehicle_type else None,
+                db=db
+            ).duration_minutes
+        except HTTPException as e:
+            if e.status_code == 404:
+                duration = vehicle_type.duration_minutes
+            else:
+                errors.append(schemas.BookingImportError(row_number=idx, message=e.detail or "Не удалось вычислить длительность"))
+                continue
+
+        if duration <= 0:
+            errors.append(schemas.BookingImportError(row_number=idx, message="Длительность должна быть больше 0"))
+            continue
+
+        required_slots = duration // 30 + (1 if duration % 30 != 0 else 0)
+        candidate_docks = docks_by_object.get(obj.id, [])
+        chosen_chain = None
+        chosen_dock_id = None
+
+        for dock in candidate_docks:
+            # zone check
+            if dock.available_zones:
+                zone_ids = {z.id for z in dock.available_zones}
+                if zone_id not in zone_ids:
+                    continue
+
+            slots = db.query(models.TimeSlot).filter(
+                models.TimeSlot.dock_id == dock.id,
+                models.TimeSlot.slot_date == booking_date
+            ).order_by(models.TimeSlot.start_time).all()
+
+            # find chain starting at start_time
+            for i, slot in enumerate(slots):
+                if slot.start_time != start_time:
+                    continue
+                chain = slots[i:i+required_slots]
+                if len(chain) < required_slots:
+                    continue
+                continuous = all(chain[j].end_time == chain[j+1].start_time for j in range(len(chain)-1))
+                if not continuous:
+                    continue
+                # capacity check
+                capacity_ok = True
+                for s in chain:
+                    occ = db.query(func.count(models.BookingTimeSlot.id)).join(
+                        models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id
+                    ).filter(
+                        models.BookingTimeSlot.time_slot_id == s.id,
+                        models.Booking.status == "confirmed"
+                    ).scalar() or 0
+                    if occ >= s.capacity:
+                        capacity_ok = False
+                        break
+                if capacity_ok:
+                    chosen_chain = chain
+                    chosen_dock_id = dock.id
+                    break
+            if chosen_chain:
+                break
+
+        if not chosen_chain:
+            errors.append(schemas.BookingImportError(row_number=idx, message="Нет свободного слота на объекте для этой зоны/времени"))
+            continue
+
+        new_booking = models.Booking(
+            user_id=current_user.id,
+            vehicle_type_id=vehicle_type.id,
+            vehicle_plate="",
+            driver_full_name=driver_name or "",
+            driver_phone=driver_phone or "",
+            status="confirmed",
+            supplier_id=supplier.id if supplier else None,
+            zone_id=zone_id,
+            transport_type_id=transport_type.id if transport_type else None,
+            cubes=cubes,
+            transport_sheet=transport_sheet
+        )
+        db.add(new_booking)
+        db.flush()
+
+        for s in chosen_chain:
+            db.add(models.BookingTimeSlot(booking_id=new_booking.id, time_slot_id=s.id))
+
+        created += 1
+
+    if created:
+        db.commit()
+    else:
+        db.rollback()
+
+    return schemas.BookingImportResult(created=created, errors=errors)
+

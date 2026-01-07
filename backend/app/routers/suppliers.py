@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from typing import List
-
 from io import BytesIO
 from ..db import get_db
-from ..models import Supplier, UserSupplier, UserRole, VehicleType, TransportTypeRef
 from ..models import Supplier, UserSupplier, UserRole, VehicleType, TransportTypeRef, Zone
 from ..schemas import (
     Supplier as SupplierSchema,
