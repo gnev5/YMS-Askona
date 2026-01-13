@@ -21,6 +21,7 @@ import BookingIn from './pages/BookingIn'
 import BookingOut from './pages/BookingOut'
 import AdminPrrLimits from './pages/AdminPrrLimits'
 import AdminBackups from './pages/AdminBackups'
+import AdminVolumeQuotas from './pages/AdminVolumeQuotas'
 
 type Page =
   | 'calendar'
@@ -38,6 +39,7 @@ type Page =
   | 'booking-out'
   | 'admin-objects'
   | 'admin-prr-limits'
+  | 'admin-volume-quotas'
   | 'admin-backups'
 
 const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, children?: {id: Page, label: string}[] }[] = [
@@ -58,6 +60,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, child
   { id: 'admin-objects', label: 'Объекты', icon: 'apartment', admin: true },
   { id: 'admin-vehicle-types', label: 'Типы ТС', icon: 'rv_hookup', admin: true },
   { id: 'admin-prr-limits', label: 'Лимиты ПРР', icon: 'timer', admin: true },
+  { id: 'admin-volume-quotas', label: 'Квоты по объему', icon: 'stacked_bar_chart', admin: true },
   { id: 'admin-zones', label: 'Зоны', icon: 'layers', admin: true },
   { id: 'admin-suppliers', label: 'Поставщики', icon: 'factory', admin: true },
   { id: 'admin-transport-types', label: 'Типы перевозки', icon: 'local_shipping', admin: true },
@@ -549,6 +552,8 @@ const App: React.FC = () => {
         return <AdminObjects onBack={() => setPage('calendar')} />
       case 'admin-prr-limits':
         return <AdminPrrLimits onBack={() => setPage('calendar')} />
+      case 'admin-volume-quotas':
+        return <AdminVolumeQuotas onBack={() => setPage('calendar')} />
       case 'admin-backups':
         return <AdminBackups onBack={() => setPage('calendar')} />
       case 'analytics':

@@ -26,6 +26,11 @@
 python rebuild_database.py
 ```
 
+### ??? 4: ???????? Volume Quotas + booking_type
+```bash
+python -m app.migrate_volume_quotas
+```
+
 ### Вариант 2: Миграция существующей БД
 ```bash
 # Шаг 1: Остановить сервисы

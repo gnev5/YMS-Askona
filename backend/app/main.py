@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .db import engine, Base
-from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics, objects, prr_limits, backups
+from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics, objects, prr_limits, backups, volume_quotas
 
 import logging
 
@@ -15,9 +15,17 @@ logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 app = FastAPI(title="YMS Backend")
 
 # CORS for frontend dev
+# CORS: ограничиваемся понятными фронт-источниками, чтобы не блокировало preflight с credentials
+FRONTEND_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://130.193.53.117:5173"],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,4 +46,5 @@ app.include_router(suppliers.router)
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(objects.router, prefix="/api/objects", tags=["objects"])
 app.include_router(prr_limits.router, prefix="/api/prr-limits", tags=["prr_limits"])
+app.include_router(volume_quotas.router, prefix="/api/volume-quotas", tags=["volume_quotas"])
 app.include_router(backups.router)

@@ -37,6 +37,11 @@ class TransportType(enum.Enum):
     return_goods = "return_goods"
 
 
+class BookingDirection(enum.Enum):
+    inbound = "in"
+    outbound = "out"
+
+
 class Object(Base):
     __tablename__ = "objects"
 
@@ -49,6 +54,7 @@ class Object(Base):
 
     docks: Mapped[list["Dock"]] = relationship("Dock", back_populates="object")
     prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="object")
+    volume_quotas: Mapped[list["VolumeQuota"]] = relationship("VolumeQuota", back_populates="object")
 
 
 dock_zone_association = Table(
@@ -125,6 +131,7 @@ class TransportTypeRef(Base):
     docks: Mapped[list["Dock"]] = relationship("Dock", secondary=dock_transport_type_association, back_populates="available_transport_types")
     suppliers: Mapped[list["Supplier"]] = relationship("Supplier", secondary=lambda: supplier_transport_type_association, back_populates="transport_types")
     prr_limits: Mapped[list["PrrLimit"]] = relationship("PrrLimit", back_populates="transport_type")
+    volume_quotas: Mapped[list["VolumeQuota"]] = relationship("VolumeQuota", secondary=lambda: volume_quota_transport_types, back_populates="transport_types")
 
 
 class Zone(Base):
@@ -267,6 +274,16 @@ class Booking(Base):
     
     # Статус записи
     status: Mapped[str] = mapped_column(String(20), default="confirmed", nullable=False)  # confirmed, cancelled, completed
+    booking_type: Mapped[BookingDirection] = mapped_column(
+        Enum(
+            BookingDirection,
+            values_callable=lambda enum: [e.value for e in enum],
+            name="bookingdirection",
+        ),
+        default=BookingDirection.inbound,
+        server_default=BookingDirection.inbound.value,
+        nullable=False,
+    )
     
     # Метаданные
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
@@ -314,4 +331,63 @@ class PrrLimit(Base):
 
     __table_args__ = (
         UniqueConstraint('object_id', 'supplier_id', 'transport_type_id', 'vehicle_type_id', name='_object_supplier_transport_vehicle_uc'),
+    )
+
+
+volume_quota_transport_types = Table(
+    "volume_quota_transport_types",
+    Base.metadata,
+    Column("quota_id", Integer, ForeignKey("volume_quotas.id", ondelete="CASCADE"), primary_key=True),
+    Column("transport_type_id", Integer, ForeignKey("transport_types.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class VolumeQuota(Base):
+    __tablename__ = "volume_quotas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    object_id: Mapped[int] = mapped_column(ForeignKey("objects.id"), nullable=False)
+    direction: Mapped[BookingDirection] = mapped_column(
+        Enum(
+            BookingDirection,
+            values_callable=lambda enum: [e.value for e in enum],
+            name="bookingdirection",
+        ),
+        nullable=False,
+    )
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    day_of_week: Mapped[int] = mapped_column(Integer, nullable=False)  # 0=Mon ... 6=Sun
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    allow_overbooking: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    object: Mapped["Object"] = relationship("Object", back_populates="volume_quotas")
+    transport_types: Mapped[list["TransportTypeRef"]] = relationship(
+        "TransportTypeRef",
+        secondary=volume_quota_transport_types,
+        back_populates="volume_quotas",
+    )
+    overrides: Mapped[list["VolumeQuotaOverride"]] = relationship(
+        "VolumeQuotaOverride",
+        back_populates="quota",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def transport_type_ids(self) -> list[int]:
+        return [t.id for t in self.transport_types] if self.transport_types else []
+
+
+class VolumeQuotaOverride(Base):
+    __tablename__ = "volume_quota_overrides"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    quota_id: Mapped[int] = mapped_column(ForeignKey("volume_quotas.id", ondelete="CASCADE"), nullable=False)
+    override_date: Mapped[date] = mapped_column(Date, nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+
+    quota: Mapped["VolumeQuota"] = relationship("VolumeQuota", back_populates="overrides")
+
+    __table_args__ = (
+        UniqueConstraint("quota_id", "override_date", name="uq_quota_override_date"),
     )

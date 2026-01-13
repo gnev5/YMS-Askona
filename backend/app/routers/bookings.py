@@ -10,10 +10,60 @@ from .. import models, schemas
 from ..db import get_db
 from ..deps import get_current_user
 from .prr_limits import get_duration
+from ..quota_utils import calculate_used_volume, get_quota_for_date
 from openpyxl import Workbook, load_workbook
 from io import BytesIO
 
 router = APIRouter()
+
+def _serialize_booking(db: Session, booking: models.Booking, include_user: bool = False):
+    slots = db.query(models.TimeSlot, models.Dock).join(
+        models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
+    ).join(
+        models.Dock, models.TimeSlot.dock_id == models.Dock.id
+    ).filter(
+        models.BookingTimeSlot.booking_id == booking.id
+    ).order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
+
+    if not slots:
+        logging.warning(f"No slots found for booking {booking.id}")
+        return None
+
+    first_slot, first_dock = slots[0]
+    last_slot, _ = slots[-1]
+
+    object_id = first_dock.object_id if first_dock else None
+    object_name = first_dock.object.name if getattr(first_dock, "object", None) else None
+
+    data = {
+        "id": booking.id,
+        "booking_date": first_slot.slot_date.isoformat(),
+        "start_time": first_slot.start_time.strftime("%H:%M:%S"),
+        "end_time": last_slot.end_time.strftime("%H:%M:%S"),
+        "vehicle_plate": booking.vehicle_plate or "",
+        "driver_name": booking.driver_full_name or "",
+        "driver_full_name": booking.driver_full_name or "",
+        "driver_phone": booking.driver_phone or "",
+        "vehicle_type_name": booking.vehicle_type.name if booking.vehicle_type else "",
+        "dock_name": first_dock.name if first_dock else "",
+        "status": booking.status,
+        "slots_count": len(slots),
+        "created_at": booking.created_at.isoformat(),
+        "supplier_name": booking.supplier.name if booking.supplier else None,
+        "zone_name": booking.zone.name if booking.zone else None,
+        "transport_type_name": booking.transport_type.name if booking.transport_type else None,
+        "cubes": booking.cubes,
+        "transport_sheet": booking.transport_sheet,
+        "object_id": object_id,
+        "object_name": object_name,
+        "booking_type": booking.booking_type.value if getattr(booking, "booking_type", None) else None,
+    }
+
+    if include_user and booking.user:
+        data["user_email"] = booking.user.email
+        data["user_full_name"] = booking.user.full_name
+
+    return data
 
 @router.post("/", response_model=schemas.Booking)
 def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -64,6 +114,11 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     booking_date = datetime.strptime(booking.booking_date, "%Y-%m-%d").date()
     start_time = datetime.strptime(booking.start_time, "%H:%M").time()
     logging.info(f"Parsed booking_date: {booking_date}, start_time: {start_time}")
+
+    try:
+        booking_direction = models.BookingDirection(booking.booking_type or "in")
+    except Exception:
+        raise HTTPException(status_code=400, detail="booking_type must be 'in' or 'out'")
 
     # Сначала проверим выбранный слот, если передан
     chosen_slots = None
@@ -124,9 +179,9 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                         elif dock.dock_type == models.DockType.exit:
                             limits_to_check.append(("out", obj_for_check.capacity_out, [models.DockType.exit, models.DockType.universal]))
                         else:  # universal -> проверяем лимит в зависимости от типа бронирования
-                            if booking.booking_type == 'in':
+                            if booking_direction == models.BookingDirection.inbound:
                                 limits_to_check.append(("in", obj_for_check.capacity_in, [models.DockType.entrance, models.DockType.universal]))
-                            elif booking.booking_type == 'out':
+                            elif booking_direction == models.BookingDirection.outbound:
                                 limits_to_check.append(("out", obj_for_check.capacity_out, [models.DockType.exit, models.DockType.universal]))
                         
                         logging.info(f"Limits to check: {limits_to_check}")
@@ -218,12 +273,12 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         if not dock:
             return 3 # Should not happen
         
-        if booking.booking_type == 'out':
+        if booking_direction == models.BookingDirection.outbound:
             if dock.dock_type == models.DockType.exit:
                 return 0
             if dock.dock_type == models.DockType.universal:
                 return 1
-        elif booking.booking_type == 'in':
+        elif booking_direction == models.BookingDirection.inbound:
             if dock.dock_type == models.DockType.entrance:
                 return 0
             if dock.dock_type == models.DockType.universal:
@@ -246,10 +301,10 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         obj = dock.object if dock else None
 
         # Пропускаем доки неподходящего типа
-        if booking.booking_type == 'in' and dock and dock.dock_type == models.DockType.exit:
+        if booking_direction == models.BookingDirection.inbound and dock and dock.dock_type == models.DockType.exit:
             logging.info(f"Skipping dock {dock_id}: type is 'exit' for an 'in' booking.")
             continue
-        if booking.booking_type == 'out' and dock and dock.dock_type == models.DockType.entrance:
+        if booking_direction == models.BookingDirection.outbound and dock and dock.dock_type == models.DockType.entrance:
             logging.info(f"Skipping dock {dock_id}: type is 'entrance' for an 'out' booking.")
             continue
         
@@ -260,22 +315,18 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                 logging.info(f"Skipping dock {dock_id}: transport_type_id {booking.transport_type_id} not allowed.")
                 continue # Переходим к следующему доку
 
-        # Ищем непрерывную цепочку нужной длины
-        for i in range(len(dock_slots) - required_slots + 1):
-            chain = dock_slots[i:i + required_slots]
-            logging.info(f"Checking chain in dock {dock_id}: {[s.id for s in chain]}")
-            
-            # Проверяем, что слоты идут подряд
-            is_continuous = True
-            for j in range(len(chain) - 1):
-                if chain[j].end_time != chain[j + 1].start_time:
-                    is_continuous = False
-                    break
-            
-            if not is_continuous:
-                logging.info("Chain is not continuous. Skipping.")
-                continue
-            
+        # Ищем слоты строго начиная с запрошенного времени; допускаем перерывы в расписании,
+        # но не допускаем занятые слоты (capacity) в середине цепочки.
+        start_idx = next((idx for idx, s in enumerate(dock_slots) if s.start_time == start_time), None)
+        if start_idx is None:
+            logging.info(f"No starting slot at {start_time} in dock {dock_id}. Skipping dock.")
+            continue
+
+        accumulated_minutes = 0
+        candidate_chain = []
+        valid_dock = True
+
+        for slot in dock_slots[start_idx:]:
             # Проверяем лимиты пропускной способности объекта по направлению
             if dock and obj:
                 limits_to_check = []
@@ -284,55 +335,58 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                 elif dock.dock_type == models.DockType.exit:
                     limits_to_check.append(("out", obj.capacity_out, [models.DockType.exit, models.DockType.universal]))
                 else:  # universal
-                    if booking.booking_type == 'in':
+                    if booking_direction == models.BookingDirection.inbound:
                         limits_to_check.append(("in", obj.capacity_in, [models.DockType.entrance, models.DockType.universal]))
-                    elif booking.booking_type == 'out':
+                    elif booking_direction == models.BookingDirection.outbound:
                         limits_to_check.append(("out", obj.capacity_out, [models.DockType.exit, models.DockType.universal]))
 
                 capacity_block = False
                 for _, cap_limit, types_to_use in limits_to_check:
                     if not cap_limit or cap_limit <= 0:
                         continue
-                    for slot in chain:
-                        occupancy_obj = db.query(func.count(models.BookingTimeSlot.id)).join(models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id).join(
-                            models.TimeSlot, models.BookingTimeSlot.time_slot_id == models.TimeSlot.id
-                        ).join(
-                            models.Dock, models.TimeSlot.dock_id == models.Dock.id
-                        ).filter(
-                            models.Dock.object_id == obj.id,
-                            models.Dock.dock_type.in_(types_to_use),
-                            models.TimeSlot.slot_date == slot.slot_date,
-                            models.TimeSlot.start_time == slot.start_time,
-                            models.TimeSlot.end_time == slot.end_time,
-                            models.Booking.status == "confirmed"
-                        ).scalar() or 0
-                        if occupancy_obj >= cap_limit:
-                            capacity_block = True
-                            break
-                    if capacity_block:
+                    occupancy_obj = db.query(func.count(models.BookingTimeSlot.id)).join(models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id).join(
+                        models.TimeSlot, models.BookingTimeSlot.time_slot_id == models.TimeSlot.id
+                    ).join(
+                        models.Dock, models.TimeSlot.dock_id == models.Dock.id
+                    ).filter(
+                        models.Dock.object_id == obj.id,
+                        models.Dock.dock_type.in_(types_to_use),
+                        models.TimeSlot.slot_date == slot.slot_date,
+                        models.TimeSlot.start_time == slot.start_time,
+                        models.TimeSlot.end_time == slot.end_time,
+                        models.Booking.status == "confirmed"
+                    ).scalar() or 0
+                    if occupancy_obj >= cap_limit:
+                        capacity_block = True
                         break
                 if capacity_block:
-                    logging.info(f"Object capacity block for this chain in dock {dock_id}.")
-                    continue
-
-            # Проверяем доступность всех слотов в цепочке
-            all_available = True
-            for slot in chain:
-                # Подсчитываем текущую занятость
-                current_occupancy = db.query(func.count(models.BookingTimeSlot.id)).filter(
-                    models.BookingTimeSlot.time_slot_id == slot.id
-                ).scalar() or 0
-                if current_occupancy >= slot.capacity:
-                    all_available = False
+                    logging.info(f"Object capacity block for slot {slot.id} in dock {dock_id}.")
+                    valid_dock = False
                     break
-            
-            if all_available:
-                logging.info(f"Found a valid chain in dock {dock_id}. Breaking search.")
-                chosen_slots = chain
+
+            # Проверяем занятость слота
+            current_occupancy = db.query(func.count(models.BookingTimeSlot.id)).filter(
+                models.BookingTimeSlot.time_slot_id == slot.id
+            ).scalar() or 0
+            if current_occupancy >= slot.capacity:
+                logging.info(f"Slot {slot.id} in dock {dock_id} is fully occupied. Dock rejected.")
+                valid_dock = False
                 break
-        
+
+            candidate_chain.append(slot)
+            slot_minutes = int((datetime.combine(slot.slot_date, slot.end_time) - datetime.combine(slot.slot_date, slot.start_time)).total_seconds() // 60)
+            accumulated_minutes += slot_minutes
+
+            if accumulated_minutes >= duration:
+                chosen_slots = candidate_chain
+                logging.info(f"Accumulated required duration in dock {dock_id}. Slots: {[s.id for s in candidate_chain]}")
+                break
+
         if chosen_slots:
             break
+        if not valid_dock:
+            logging.info(f"Dock {dock_id} rejected due to occupied slot or capacity block.")
+            continue
     
     if not chosen_slots:
         logging.error("--- No suitable slots found. Raising 409 Conflict. ---")
@@ -340,6 +394,30 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
             status_code=409, 
             detail="No available time slots found for the requested period"
         )
+
+    quota, total_quota_volume = get_quota_for_date(
+        db=db,
+        object_id=booking.object_id,
+        transport_type_id=booking.transport_type_id,
+        target_date=booking_date,
+        direction=booking_direction,
+    )
+    if quota and total_quota_volume is not None:
+        if booking.cubes is None:
+            raise HTTPException(status_code=400, detail="Volume (cubes) is required because a quota applies on this date")
+        used_volume = calculate_used_volume(
+            db=db,
+            object_id=booking.object_id,
+            transport_type_id=booking.transport_type_id,
+            target_date=booking_date,
+            direction=booking_direction,
+        )
+        remaining_volume = total_quota_volume - used_volume
+        if not quota.allow_overbooking and booking.cubes > remaining_volume:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quota exceeded for {booking_date}. Remaining: {remaining_volume}, requested: {booking.cubes}",
+            )
     
     logging.info(f"--- Booking successful. Creating booking with slots: {[s.id for s in chosen_slots]} ---")
     # Создаем запись
@@ -354,7 +432,8 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         zone_id=booking.zone_id,
         transport_type_id=booking.transport_type_id,
         cubes=booking.cubes,
-        transport_sheet=booking.transport_sheet
+        transport_sheet=booking.transport_sheet,
+        booking_type=booking_direction,
     )
     db.add(new_booking)
     db.flush()  # Получаем ID
@@ -539,6 +618,10 @@ def download_booking_import_template(
     dir_normalized = direction.lower()
     if dir_normalized not in ("in", "out"):
         raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+    try:
+        direction_enum = models.BookingDirection(dir_normalized)
+    except Exception:
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
 
     wb = Workbook()
     ws = wb.active
@@ -634,6 +717,7 @@ def import_bookings_from_excel(
 
     errors: list[schemas.BookingImportError] = []
     created = 0
+    provisional_usage: dict[tuple[int, int, str, datetime.date], float] = {}
 
     for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         raw_transport_sheet, raw_supplier, raw_cubes, raw_date, raw_time, raw_transport_type, raw_vehicle_type, raw_object, raw_driver_name, raw_driver_phone = row
@@ -736,38 +820,76 @@ def import_bookings_from_excel(
                 models.TimeSlot.slot_date == booking_date
             ).order_by(models.TimeSlot.start_time).all()
 
-            # find chain starting at start_time
-            for i, slot in enumerate(slots):
-                if slot.start_time != start_time:
-                    continue
-                chain = slots[i:i+required_slots]
-                if len(chain) < required_slots:
-                    continue
-                continuous = all(chain[j].end_time == chain[j+1].start_time for j in range(len(chain)-1))
-                if not continuous:
-                    continue
-                # capacity check
-                capacity_ok = True
-                for s in chain:
-                    occ = db.query(func.count(models.BookingTimeSlot.id)).join(
-                        models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id
-                    ).filter(
-                        models.BookingTimeSlot.time_slot_id == s.id,
-                        models.Booking.status == "confirmed"
-                    ).scalar() or 0
-                    if occ >= s.capacity:
-                        capacity_ok = False
-                        break
-                if capacity_ok:
+            start_idx = next((i for i, s in enumerate(slots) if s.start_time == start_time), None)
+            if start_idx is None:
+                continue
+
+            accumulated_minutes = 0
+            chain: list[models.TimeSlot] = []
+            dock_ok = True
+
+            for s in slots[start_idx:]:
+                occ = db.query(func.count(models.BookingTimeSlot.id)).join(
+                    models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id
+                ).filter(
+                    models.BookingTimeSlot.time_slot_id == s.id,
+                    models.Booking.status == "confirmed"
+                ).scalar() or 0
+                if occ >= s.capacity:
+                    dock_ok = False
+                    break
+
+                chain.append(s)
+                slot_minutes = int((datetime.combine(s.slot_date, s.end_time) - datetime.combine(s.slot_date, s.start_time)).total_seconds() // 60)
+                accumulated_minutes += slot_minutes
+
+                if accumulated_minutes >= duration:
                     chosen_chain = chain
                     chosen_dock_id = dock.id
                     break
+
+            if not dock_ok:
+                continue
             if chosen_chain:
                 break
 
         if not chosen_chain:
             errors.append(schemas.BookingImportError(row_number=idx, message="Нет свободного слота на объекте для этой зоны/времени"))
             continue
+
+
+        quota = None
+        total_quota_volume = None
+        if transport_type:
+            quota, total_quota_volume = get_quota_for_date(
+                db=db,
+                object_id=obj.id,
+                transport_type_id=transport_type.id,
+                target_date=booking_date,
+                direction=direction_enum,
+            )
+        if quota and total_quota_volume is not None:
+            if cubes is None:
+                errors.append(schemas.BookingImportError(row_number=idx, message="cubes ?????????? ??? ??? ? ??????"))
+                continue
+            key = (obj.id, transport_type.id, direction_enum.value, booking_date)
+            extra_used = provisional_usage.get(key, 0.0)
+            used_volume = calculate_used_volume(
+                db=db,
+                object_id=obj.id,
+                transport_type_id=transport_type.id,
+                target_date=booking_date,
+                direction=direction_enum,
+            ) + extra_used
+            remaining_volume = total_quota_volume - used_volume
+            if not quota.allow_overbooking and cubes > remaining_volume:
+                errors.append(
+                    schemas.BookingImportError(
+                        row_number=idx,
+                        message=f"Превышена квота на {booking_date}. Остаток {remaining_volume}, заявлено {cubes}",
+                    )
+                )
+                continue
 
         new_booking = models.Booking(
             user_id=current_user.id,
@@ -780,13 +902,18 @@ def import_bookings_from_excel(
             zone_id=zone_id,
             transport_type_id=transport_type.id if transport_type else None,
             cubes=cubes,
-            transport_sheet=transport_sheet
+            transport_sheet=transport_sheet,
+            booking_type=direction_enum,
         )
         db.add(new_booking)
         db.flush()
 
         for s in chosen_chain:
             db.add(models.BookingTimeSlot(booking_id=new_booking.id, time_slot_id=s.id))
+
+        if quota and total_quota_volume is not None and cubes is not None and transport_type:
+            key = (obj.id, transport_type.id, direction_enum.value, booking_date)
+            provisional_usage[key] = provisional_usage.get(key, 0.0) + cubes
 
         created += 1
 

@@ -1,4 +1,5 @@
 from datetime import date, time, datetime, timedelta
+from datetime import date, time, datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ def list_time_slots(
     object_id: Optional[int] = None,
     supplier_id: Optional[int] = None,
     transport_type_id: Optional[int] = None,
+    booking_type: Optional[str] = Query(None, description="in|out to auto-filter dock types"),
     dock_types: Optional[str] = Query(None, description="Comma-separated list of dock types (e.g., 'exit,universal')"),
     db: Session = Depends(get_db),
 ):
@@ -28,13 +30,31 @@ def list_time_slots(
     if object_id:
         docks_query = docks_query.filter(models.Dock.object_id == object_id)
 
+    inferred_types: list[models.DockType] | None = None
+    if booking_type:
+        try:
+            direction = models.BookingDirection(booking_type)
+        except Exception:
+            raise HTTPException(status_code=400, detail="booking_type must be 'in' or 'out'")
+        if direction == models.BookingDirection.inbound:
+            inferred_types = [models.DockType.entrance, models.DockType.universal]
+        else:
+            inferred_types = [models.DockType.exit, models.DockType.universal]
+
+    types: list[models.DockType] | None = None
     if dock_types:
         try:
-            types = [models.DockType(t.strip()) for t in dock_types.split(',') if t.strip()]
-            if types:
-                docks_query = docks_query.filter(models.Dock.dock_type.in_(types))
+            provided = [models.DockType(t.strip()) for t in dock_types.split(',') if t.strip()]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid dock_type provided: {e}")
+        if inferred_types and any(t not in inferred_types for t in provided):
+            raise HTTPException(status_code=400, detail="dock_types do not match booking_type")
+        types = provided
+    elif inferred_types:
+        types = inferred_types
+
+    if types:
+        docks_query = docks_query.filter(models.Dock.dock_type.in_(types))
 
     if supplier_id:
         supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
@@ -61,13 +81,8 @@ def list_time_slots(
         fallback_query = db.query(models.Dock.id)
         if object_id:
             fallback_query = fallback_query.filter(models.Dock.object_id == object_id)
-        if dock_types:
-            try:
-                types = [models.DockType(t.strip()) for t in dock_types.split(',') if t.strip()]
-                if types:
-                    fallback_query = fallback_query.filter(models.Dock.dock_type.in_(types))
-            except ValueError:
-                pass # Ignore invalid dock types in fallback
+        if types:
+            fallback_query = fallback_query.filter(models.Dock.dock_type.in_(types))
 
         dock_ids = [d[0] for d in fallback_query.all()]
 
@@ -109,14 +124,36 @@ def list_time_slots(
         .all()
     )
 
+    slot_by_id = {slot.id: slot for slot in slots}
+
+    # Track first slot per booking to mark start
+    first_slot_by_booking: dict[int, int] = {}
+    for row in booking_rows:
+        slot = slot_by_id.get(row.time_slot_id)
+        if not slot:
+            continue
+        current_start = datetime.combine(slot.slot_date, slot.start_time)
+        if row.booking_id not in first_slot_by_booking:
+            first_slot_by_booking[row.booking_id] = (current_start, row.time_slot_id)
+        else:
+            existing_dt, _ = first_slot_by_booking[row.booking_id]
+            if current_start < existing_dt:
+                first_slot_by_booking[row.booking_id] = (current_start, row.time_slot_id)
+
     bookings_map: dict[int, list[schemas.TimeSlotBookingInfo]] = {}
     for row in booking_rows:
+        is_start = False
+        first_entry = first_slot_by_booking.get(row.booking_id)
+        if first_entry and first_entry[1] == row.time_slot_id:
+            is_start = True
+
         bookings_map.setdefault(row.time_slot_id, []).append(
             schemas.TimeSlotBookingInfo(
                 id=row.booking_id,
                 supplier_name=row.supplier_name,
                 cubes=row.cubes,
                 transport_sheet=row.transport_sheet,
+                is_start=is_start,
             )
         )
 

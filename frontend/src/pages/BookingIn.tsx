@@ -26,6 +26,12 @@ interface YmsObject {
 interface Supplier {
   id: number
   name: string
+  transport_types?: TransportType[]
+}
+
+interface TransportType {
+  id: number
+  name: string
 }
 
 interface SlotBookingInfo {
@@ -59,19 +65,33 @@ interface EventItem {
   title: string
   start: Date
   end: Date
-  resource: TimeSlot
+  resource: TimeSlot | 'quota'
   availableDocks?: number[]
   resourceId?: number
+  resourceIds?: number[]
   tooltip?: string
+  isQuota?: boolean
+  quotaTotal?: number | null
+  quotaRemaining?: number
+  isStart?: boolean
+}
+
+interface QuotaAvailability {
+  date: string
+  total_volume: number | null
+  remaining_volume: number
 }
 
 const BookingIn: React.FC = () => {
   const [objects, setObjects] = useState<YmsObject[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
   const [docks, setDocks] = useState<Dock[]>([])
   const [selectedObject, setSelectedObject] = useState<number | null>(null)
   const [selectedSupplier, setSelectedSupplier] = useState<number | null>(null)
+  const [selectedTransportType, setSelectedTransportType] = useState<number | null>(null)
   const [events, setEvents] = useState<EventItem[]>([])
+  const [quotaByDate, setQuotaByDate] = useState<Record<string, { remaining: number; total: number | null }>>({})
   const initialWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
   const [currentDate, setCurrentDate] = useState(new Date())
   const [currentView, setCurrentView] = useState<View>('week')
@@ -79,6 +99,9 @@ const BookingIn: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null)
   const filteredDocks = selectedObject ? docks.filter(d => d.object_id === selectedObject && (d.dock_type === 'entrance' || d.dock_type === 'universal')) : []
+  const availableTransportTypes = selectedSupplier
+    ? suppliers.find(s => s.id === selectedSupplier)?.transport_types || transportTypes
+    : transportTypes
 
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importLoading, setImportLoading] = useState(false)
@@ -100,6 +123,11 @@ const BookingIn: React.FC = () => {
     return lines.join('\n')
   }
 
+  const formatVolume = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return ''
+    return Number.isInteger(value) ? `${value}` : value.toFixed(1)
+  }
+
   useEffect(() => {
     const fetchObjects = async () => {
       const { data } = await axios.get<YmsObject[]>(`${API_BASE}/api/objects`)
@@ -111,6 +139,11 @@ const BookingIn: React.FC = () => {
       setSuppliers(data)
     }
 
+    const fetchTransportTypes = async () => {
+      const { data } = await axios.get<TransportType[]>(`${API_BASE}/api/transport-types/`)
+      setTransportTypes(data)
+    }
+
     const fetchDocks = async () => {
       const { data } = await axios.get<Dock[]>(`${API_BASE}/api/docks/`)
       setDocks(data)
@@ -118,98 +151,175 @@ const BookingIn: React.FC = () => {
 
     fetchObjects()
     fetchSuppliers()
+    fetchTransportTypes()
     fetchDocks()
 
     const savedObject = localStorage.getItem('selectedObject')
     const savedSupplier = localStorage.getItem('selectedSupplier')
+    const savedTransportType = localStorage.getItem('selectedTransportType_In')
     if (savedObject) setSelectedObject(Number(savedObject))
     if (savedSupplier) setSelectedSupplier(Number(savedSupplier))
+    if (savedTransportType) setSelectedTransportType(Number(savedTransportType))
   }, [])
 
   useEffect(() => {
     if (selectedObject) localStorage.setItem('selectedObject', String(selectedObject))
     if (selectedSupplier) localStorage.setItem('selectedSupplier', String(selectedSupplier))
-    if (selectedObject && selectedSupplier) handleSearch()
+    if (selectedTransportType) localStorage.setItem('selectedTransportType_In', String(selectedTransportType))
+    if (selectedObject && selectedSupplier && selectedTransportType) handleSearch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedObject, selectedSupplier])
+  }, [selectedObject, selectedSupplier, selectedTransportType])
 
+  useEffect(() => {
+    const allowedTypes = selectedSupplier
+      ? suppliers.find(s => s.id === selectedSupplier)?.transport_types || transportTypes
+      : transportTypes
+
+    if (selectedTransportType) {
+      const exists = allowedTypes.some(t => t.id === selectedTransportType)
+      if (!exists) {
+        setSelectedTransportType(null)
+      }
+    }
+    if (!selectedTransportType && allowedTypes.length === 1) {
+      setSelectedTransportType(allowedTypes[0].id)
+    }
+  }, [selectedSupplier, selectedTransportType, suppliers, transportTypes])
+
+  
   const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
-    if (!selectedObject || !selectedSupplier) return
+    if (!selectedObject || !selectedSupplier || !selectedTransportType) {
+      setQuotaByDate({})
+      return
+    }
 
     const currentRange = rangeOverride || range
     const viewMode = viewOverride || currentView
     const from = format(currentRange.start, 'yyyy-MM-dd')
     const to = format(currentRange.end, 'yyyy-MM-dd')
-    const { data } = await axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&supplier_id=${selectedSupplier}&booking_type=in`)
-    const evts: EventItem[] = []
 
-    for (let d = new Date(currentRange.start); d <= currentRange.end; d = new Date(d.getTime() + 86400000)) {
-      const dow = d.getDay() === 0 ? 6 : d.getDay() - 1
-      const daySlots = data.filter(s => s.day_of_week === dow)
+    try {
+      const [slotsRes, quotaRes] = await Promise.all([
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&supplier_id=${selectedSupplier}&transport_type_id=${selectedTransportType}&booking_type=in`),
+        axios.get<QuotaAvailability[]>(`${API_BASE}/api/volume-quotas/availability`, {
+          params: {
+            from_date: from,
+            to_date: to,
+            object_id: selectedObject,
+            transport_type_id: selectedTransportType,
+            direction: 'in',
+          },
+        }).catch(() => ({ data: [] as QuotaAvailability[] })),
+      ])
 
-      if (viewMode === 'day') {
-        daySlots.forEach(slot => {
-          const [sh, sm] = slot.start_time.split(':').map(Number)
-          const [eh, em] = slot.end_time.split(':').map(Number)
-          const start = new Date(d)
-          start.setHours(sh, sm, 0, 0)
-          const end = new Date(d)
-          end.setHours(eh, em, 0, 0)
+      const quotaMap: Record<string, { remaining: number; total: number | null }> = {}
+      quotaRes.data.forEach(q => {
+        quotaMap[q.date] = { remaining: q.total_volume !== null ? q.remaining_volume : 0, total: q.total_volume }
+      })
+      setQuotaByDate(quotaMap)
 
-          const title = `${slot.occupancy}/${slot.capacity}`
-          const tooltip = formatBookingTooltip(slot.bookings)
+      const data = slotsRes.data
+      const evts: EventItem[] = []
 
-          evts.push({
-            id: `slot-${slot.id}-${d.toDateString()}`,
-            title,
-            start,
-            end,
-            resource: slot,
-            availableDocks: slot.dock_id ? [slot.dock_id] : [],
-            resourceId: slot.dock_id,
-            tooltip,
+      for (let d = new Date(currentRange.start); d <= currentRange.end; d = new Date(d.getTime() + 86400000)) {
+        const dow = d.getDay() === 0 ? 6 : d.getDay() - 1
+        const daySlots = data.filter(s => s.day_of_week === dow)
+
+        if (viewMode === 'day') {
+          daySlots.forEach(slot => {
+            const [sh, sm] = slot.start_time.split(':').map(Number)
+            const [eh, em] = slot.end_time.split(':').map(Number)
+            const start = new Date(d)
+            start.setHours(sh, sm, 0, 0)
+            const end = new Date(d)
+            end.setHours(eh, em, 0, 0)
+
+            const title = `${slot.occupancy}/${slot.capacity}`
+            const tooltip = formatBookingTooltip(slot.bookings)
+
+            const isStart = (slot.bookings || []).some(b => (b as any).is_start)
+            const displayTitle = isStart ? `▶ ${title}` : title
+
+            evts.push({
+              id: `slot-${slot.id}-${d.toDateString()}`,
+              title: displayTitle,
+              start,
+              end,
+              resource: slot,
+              availableDocks: slot.dock_id ? [slot.dock_id] : [],
+              resourceId: slot.dock_id,
+              tooltip,
+              isStart,
+            })
           })
-        })
-      } else {
-        const slotGroups = new Map<string, TimeSlot[]>()
-        daySlots.forEach(slot => {
-          const timeKey = `${slot.start_time}-${slot.end_time}`
-          if (!slotGroups.has(timeKey)) slotGroups.set(timeKey, [])
-          slotGroups.get(timeKey)!.push(slot)
-        })
+        } else {
+          const slotGroups = new Map<string, TimeSlot[]>()
+          daySlots.forEach(slot => {
+            const timeKey = `${slot.start_time}-${slot.end_time}`
+            if (!slotGroups.has(timeKey)) slotGroups.set(timeKey, [])
+            slotGroups.get(timeKey)!.push(slot)
+          })
 
-        slotGroups.forEach((slots, timeKey) => {
-          if (!slots.length) return
-          const [sh, sm] = slots[0].start_time.split(':').map(Number)
-          const [eh, em] = slots[0].end_time.split(':').map(Number)
-          const start = new Date(d)
-          start.setHours(sh, sm, 0, 0)
-          const end = new Date(d)
-          end.setHours(eh, em, 0, 0)
+          slotGroups.forEach((slots, timeKey) => {
+            if (!slots.length) return
+            const [sh, sm] = slots[0].start_time.split(':').map(Number)
+            const [eh, em] = slots[0].end_time.split(':').map(Number)
+            const start = new Date(d)
+            start.setHours(sh, sm, 0, 0)
+            const end = new Date(d)
+            end.setHours(eh, em, 0, 0)
 
-          const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0)
-          const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0)
-          let status: 'free' | 'partial' | 'full' = 'free'
-          if (totalOccupancy === 0) status = 'free'
-          else if (totalOccupancy < totalCapacity) status = 'partial'
-          else status = 'full'
+            const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0)
+            const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0)
+            let status: 'free' | 'partial' | 'full' = 'free'
+            if (totalOccupancy === 0) status = 'free'
+            else if (totalOccupancy < totalCapacity) status = 'partial'
+            else status = 'full'
 
-          const title = `${totalOccupancy}/${totalCapacity}`
-          const combinedResource: TimeSlot = {
-            id: slots[0].id,
-            day_of_week: slots[0].day_of_week,
-            start_time: slots[0].start_time,
-            end_time: slots[0].end_time,
-            capacity: totalCapacity,
-            occupancy: totalOccupancy,
-            status,
-          }
-          const availableDocks = slots.filter(s => s.occupancy < s.capacity).map(s => s.dock_id).filter((id): id is number => typeof id === 'number')
-          evts.push({ id: `combined-${timeKey}-${d.toDateString()}`, title, start, end, resource: combinedResource, availableDocks })
-        })
+            const title = `${totalOccupancy}/${totalCapacity}`
+            const combinedResource: TimeSlot = {
+              id: slots[0].id,
+              day_of_week: slots[0].day_of_week,
+              start_time: slots[0].start_time,
+              end_time: slots[0].end_time,
+              capacity: totalCapacity,
+              occupancy: totalOccupancy,
+              status,
+            }
+            const availableDocks = slots.filter(s => s.occupancy < s.capacity).map(s => s.dock_id).filter((id): id is number => typeof id === 'number')
+            const isStart = slots.some(s => (s.bookings || []).some(b => (b as any).is_start))
+            const displayTitle = isStart ? `▶ ${title}` : title
+
+            evts.push({ id: `combined-${timeKey}-${d.toDateString()}`, title: displayTitle, start, end, resource: combinedResource, availableDocks, isStart })
+          })
+        }
       }
+
+      Object.entries(quotaMap).forEach(([dateStr, q]) => {
+        if (q.total === null) return
+        const resourceIds = viewMode === 'day' ? filteredDocks.map(d => d.id) : undefined
+        const start = new Date(`${dateStr}T00:00:00`)
+        const end = new Date(start)
+        end.setDate(end.getDate() + 1)
+        evts.push({
+          id: `quota-${dateStr}`,
+          title: `${formatVolume(q.remaining)}/${formatVolume(q.total)}`,
+          start,
+          end,
+          allDay: true as any,
+          resource: 'quota',
+          isQuota: true,
+          quotaTotal: q.total,
+          quotaRemaining: q.remaining,
+          resourceIds: resourceIds && resourceIds.length ? resourceIds : undefined,
+        })
+      })
+
+      setEvents(evts)
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || '?? ??????? ????????? ?????')
+      setQuotaByDate({})
     }
-    setEvents(evts)
   }
 
   const onSelectSlot = (slotInfo: SlotInfo) => {
@@ -222,7 +332,8 @@ const BookingIn: React.FC = () => {
   }
 
   const openModalForEvent = (evt: EventItem) => {
-    if (String(evt.resource.status).toLowerCase() === 'full') return
+    if (evt.isQuota) return
+    if (String((evt as any).resource?.status || '').toLowerCase() === 'full') return
     setSelectedSlot({ start: evt.start, end: evt.end, slotId: evt.resource.id, availableDocks: evt.availableDocks })
     setIsModalOpen(true)
   }
@@ -293,7 +404,7 @@ const BookingIn: React.FC = () => {
 
   const onViewChange = (v: View) => {
     setCurrentView(v)
-    if (selectedObject && selectedSupplier) handleSearch(range, v)
+    if (selectedObject && selectedSupplier && selectedTransportType) handleSearch(range, v)
   }
 
   const dayPropGetter = (date: Date) => {
@@ -305,29 +416,64 @@ const BookingIn: React.FC = () => {
     return {}
   }
 
+  
   const eventPropGetter = (event: EventItem) => {
-    const status = String(event.resource.status || '').toLowerCase()
+    if (event.isQuota) {
+      const total = event.quotaTotal || 0
+      const remaining = event.quotaRemaining || 0
+      let bg = '#e0f2fe'
+      let border = '#0ea5e9'
+      if (remaining < 0) {
+        bg = '#fee2e2'
+        border = '#ef4444'
+      } else if (total > 0 && remaining / total < 0.1) {
+        bg = '#fff7ed'
+        border = '#f97316'
+      }
+      return {
+        style: {
+          backgroundColor: bg,
+          border: `1px solid ${border}`,
+          color: '#0f172a',
+          fontWeight: 700,
+          fontSize: 12,
+          padding: '2px 6px',
+          pointerEvents: 'none'
+        },
+        title: event.title,
+      }
+    }
+
+    const status = String((event as any).resource?.status || '').toLowerCase()
     let bg = '#e6ffed'
     let border = '#22c55e'
     let cursor = 'pointer'
-    let title = event.tooltip || 'Свободно'
+    let title = event.tooltip || '???????+????????'
+    let boxShadow: string | undefined
 
     if (status === 'partial') {
       bg = '#fff7e6'
       border = '#f59e0b'
-      if (!event.tooltip) title = 'Частично занято'
+      if (!event.tooltip) title = '?????????? ??????????'
     } else if (status === 'full') {
       bg = '#ffe6e6'
       border = '#ef4444'
       cursor = 'not-allowed'
-      if (!event.tooltip) title = 'Недоступно'
+      if (!event.tooltip) title = '????????????????'
+    }
+
+    if (event.isStart) {
+      if (!String(title).startsWith('▶')) {
+        title = `▶ ${title}`
+      }
     }
 
     return {
-      style: { backgroundColor: bg, borderLeft: `4px solid ${border}`, cursor, color: '#1e3a8a' },
+      style: { backgroundColor: bg, borderLeft: `${event.isStart ? 6 : 4}px solid ${border}`, cursor, color: '#1e3a8a' },
       title,
     }
   }
+
 
   return (
     <div>
@@ -378,6 +524,15 @@ const BookingIn: React.FC = () => {
             ))}
           </select>
         </div>
+        <div className="field">
+          <label>Тип перевозки</label>
+          <select value={selectedTransportType || ''} onChange={(e) => setSelectedTransportType(Number(e.target.value))}>
+            <option value="" disabled>Выберите тип перевозки</option>
+            {availableTransportTypes.map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="inline-actions" style={{ marginTop: 12 }}>
@@ -412,6 +567,7 @@ const BookingIn: React.FC = () => {
           tooltipAccessor="tooltip"
           dayPropGetter={dayPropGetter}
           eventPropGetter={eventPropGetter}
+          
           culture="ru"
         />
       </div>
@@ -426,6 +582,7 @@ const BookingIn: React.FC = () => {
         onBookingSuccess={handleBookingSuccess}
         selectedObject={selectedObject}
         prefillSupplierId={selectedSupplier}
+        prefillTransportTypeId={selectedTransportType}
       />
     </div>
   )

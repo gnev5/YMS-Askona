@@ -183,6 +183,7 @@ class TimeSlotBookingInfo(BaseModel):
     supplier_name: Optional[str] = None
     cubes: Optional[float] = None
     transport_sheet: Optional[str] = None
+    is_start: bool = False
 
 class TimeSlotWithBookings(TimeSlotWithOccupancy):
     bookings: List[TimeSlotBookingInfo] = []
@@ -213,6 +214,7 @@ class Booking(BookingBase):
     id: int
     user_id: int
     status: str
+    booking_type: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -241,6 +243,7 @@ class BookingWithDetails(BaseModel):
     object_name: Optional[str] = None
     user_email: Optional[str] = None
     user_full_name: Optional[str] = None
+    booking_type: Optional[str] = None
 
 # Supplier schemas
 class SupplierBase(BaseModel):
@@ -318,6 +321,7 @@ class BookingUpdated(BookingBaseUpdated):
     id: int
     user_id: int
     status: str
+    booking_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -357,6 +361,83 @@ class PrrLimit(PrrLimitBase):
 
     class Config:
         from_attributes = True
+
+# PrrLimit import/export schemas
+class PrrLimitImportError(BaseModel):
+    row_number: int
+    message: str
+
+
+class PrrLimitImportConflict(BaseModel):
+    row_number: int
+    object_name: str
+    supplier_name: Optional[str] = None
+    transport_type: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    existing_duration: Optional[int] = None
+    new_duration: int
+    source: str  # "database" | "file"
+
+
+class PrrLimitImportResult(BaseModel):
+    created: int
+    updated: int
+    errors: List[PrrLimitImportError] = []
+    conflicts: List[PrrLimitImportConflict] = []
+
+# Volume quota schemas
+class VolumeQuotaOverrideBase(BaseModel):
+    override_date: date
+    volume: float
+
+class VolumeQuotaOverride(VolumeQuotaOverrideBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class VolumeQuotaBase(BaseModel):
+    object_id: int
+    direction: str
+    year: int
+    month: int
+    day_of_week: int
+    volume: float
+    allow_overbooking: bool = True
+    transport_type_ids: List[int]
+
+class VolumeQuotaCreate(VolumeQuotaBase):
+    overrides: List[VolumeQuotaOverrideBase] = []
+
+class VolumeQuotaUpdate(VolumeQuotaBase):
+    overrides: List[VolumeQuotaOverrideBase] = []
+
+class VolumeQuota(VolumeQuotaBase):
+    id: int
+    overrides: List[VolumeQuotaOverride] = []
+
+    class Config:
+        from_attributes = True
+
+class VolumeQuotaAvailability(BaseModel):
+    date: date
+    total_volume: Optional[float] = None
+    used_volume: float
+    remaining_volume: float
+    allow_overbooking: Optional[bool] = True
+    quota_id: Optional[int] = None
+
+
+class VolumeQuotaImportError(BaseModel):
+    sheet: str
+    row_number: int
+    message: str
+
+
+class VolumeQuotaImportResult(BaseModel):
+    created: int
+    updated: int
+    errors: List[VolumeQuotaImportError] = []
 
 
 # Booking import schemas

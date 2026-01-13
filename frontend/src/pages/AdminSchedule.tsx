@@ -137,6 +137,7 @@ const AdminSchedule: React.FC<{ onBack: () => void; onOpenTimeSlots: () => void 
       const params = new URLSearchParams()
       if (startDate) params.append('start_date', startDate)
       if (endDate) params.append('end_date', endDate)
+      if (selectedDockId != null) params.append('dock_id', String(selectedDockId))
       
       const url = `${API_BASE}/api/work-schedules/generate-time-slots?${params.toString()}`
       const response = await axios.post(url, {}, { headers })

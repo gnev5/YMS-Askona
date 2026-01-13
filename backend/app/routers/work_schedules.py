@@ -125,6 +125,7 @@ def delete_schedule(schedule_id: int, db: Session = Depends(get_db), _: models.U
 def generate_time_slots(
     start_date: date = None,
     end_date: date = None,
+    dock_id: int | None = None,
     db: Session = Depends(get_db), 
     _: models.User = Depends(require_admin)
 ):
@@ -146,7 +147,15 @@ def generate_time_slots(
     if (end_date - start_date).days > 90:  # Ограничиваем 3 месяцами
         raise HTTPException(status_code=400, detail="Period cannot exceed 90 days")
     
-    schedules = db.query(models.WorkSchedule).all()
+    schedules_query = db.query(models.WorkSchedule)
+    if dock_id is not None:
+        # Ensure dock exists so we don't silently skip due to bad id
+        dock_exists = db.query(models.Dock.id).filter(models.Dock.id == dock_id).first()
+        if not dock_exists:
+            raise HTTPException(status_code=404, detail="Dock not found")
+        schedules_query = schedules_query.filter(models.WorkSchedule.dock_id == dock_id)
+
+    schedules = schedules_query.all()
     slots_created = 0
     
     current_date = start_date
