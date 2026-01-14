@@ -6,7 +6,7 @@ import { ru } from 'date-fns/locale'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import BookingModal from '../components/BookingModal'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://130.193.53.117:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 const locales = { ru }
 const localizer = dateFnsLocalizer({
@@ -303,7 +303,7 @@ const BookingIn: React.FC = () => {
         end.setDate(end.getDate() + 1)
         evts.push({
           id: `quota-${dateStr}`,
-          title: `${formatVolume(q.remaining)}/${formatVolume(q.total)}`,
+          title: `Квота: ${formatVolume(q.total)} Остаток: ${formatVolume(q.remaining)}`,
           start,
           end,
           allDay: true as any,
@@ -389,8 +389,6 @@ const BookingIn: React.FC = () => {
       setImportLoading(false)
     }
   }
-
-  const goToDate = (date: Date) => setCurrentDate(date)
 
   const onRangeChange = (r: any) => {
     if (Array.isArray(r) && r.length) {
@@ -533,12 +531,6 @@ const BookingIn: React.FC = () => {
             ))}
           </select>
         </div>
-      </div>
-
-      <div className="inline-actions" style={{ marginTop: 12 }}>
-        <button className="btn-secondary" onClick={() => goToDate(new Date())}>Сегодня</button>
-        <button className="btn-secondary" onClick={() => goToDate(addDays(new Date(), 1))}>Завтра</button>
-        <button className="btn-secondary" onClick={() => goToDate(addDays(new Date(), 7))}>Через неделю</button>
       </div>
 
       <div className="calendar-shell" style={{ marginTop: 12 }}>

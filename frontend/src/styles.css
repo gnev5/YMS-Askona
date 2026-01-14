@@ -266,7 +266,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 }
 .close-btn:hover { color: var(--text); background: #f8fafc; }
 .modal-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
-.form-grid { display: grid; gap: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .field label { display: block; font-weight: 600; margin-bottom: 4px; color: #1f2937; }
 .field input, .field select, .field textarea {
   width: 100%;
