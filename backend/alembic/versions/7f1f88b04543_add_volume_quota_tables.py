@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -26,7 +27,7 @@ def upgrade() -> None:
         "volume_quotas",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("object_id", sa.Integer(), sa.ForeignKey("objects.id"), nullable=False),
-        sa.Column("direction", sa.Enum("in", "out", name="bookingdirection", create_type=False), nullable=False),
+        sa.Column("direction", postgresql.ENUM("in", "out", name="bookingdirection", create_type=False), nullable=False),
         sa.Column("year", sa.Integer(), nullable=False),
         sa.Column("month", sa.Integer(), nullable=False),
         sa.Column("day_of_week", sa.Integer(), nullable=False),

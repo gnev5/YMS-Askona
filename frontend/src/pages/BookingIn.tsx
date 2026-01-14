@@ -6,7 +6,7 @@ import { ru } from 'date-fns/locale'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import BookingModal from '../components/BookingModal'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://130.193.53.117:8000'
 
 const locales = { ru }
 const localizer = dateFnsLocalizer({
