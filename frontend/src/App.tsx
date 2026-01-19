@@ -432,13 +432,55 @@ const CalendarView: React.FC<{ goToPage: (p: Page) => void }> = ({ goToPage }) =
 }
 
 const AppShell: React.FC<{ page: Page; onNavigate: (p: Page) => void; children: React.ReactNode }> = ({ page, onNavigate, children }) => {
-  const { user, logout } = useAuth()
+  const { user, logout, token } = useAuth()
   const isAdmin = user?.role?.toLowerCase?.().includes('admin')
   const navItems = NAV_ITEMS.filter(item => !item.admin || isAdmin)
   const [openMenu, setOpenMenu] = useState<Page | null>(null)
+  const [showPwdModal, setShowPwdModal] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [pwdError, setPwdError] = useState<string | null>(null)
+  const [pwdSuccess, setPwdSuccess] = useState<string | null>(null)
+  const [pwdLoading, setPwdLoading] = useState(false)
 
   const handleNavigate = (p: Page) => {
     onNavigate(p)
+  }
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (newPassword !== confirmPassword) {
+      setPwdError('Новый пароль и подтверждение не совпадают')
+      return
+    }
+    setPwdLoading(true)
+    setPwdError(null)
+    setPwdSuccess(null)
+    try {
+      await axios.post(`${API_BASE}/auth/change-password`, {
+        current_password: currentPassword,
+        new_password: newPassword,
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      setPwdSuccess('Пароль обновлён. Выполните вход заново.')
+      setTimeout(() => logout(), 800)
+    } catch (err: any) {
+      setPwdError(err?.response?.data?.detail || 'Не удалось сменить пароль')
+    } finally {
+      setPwdLoading(false)
+    }
+  }
+
+  const closePwdModal = () => {
+    setShowPwdModal(false)
+    setCurrentPassword('')
+    setNewPassword('')
+    setConfirmPassword('')
+    setPwdError(null)
+    setPwdSuccess(null)
+    setPwdLoading(false)
   }
 
   const handleMenuClick = (item: typeof navItems[0]) => {
@@ -503,17 +545,40 @@ const AppShell: React.FC<{ page: Page; onNavigate: (p: Page) => void; children: 
                 {user?.email?.[0]?.toUpperCase?.() || 'U'}
               </div>
               <div>
-                <div style={{ fontWeight: 700 }}>{user?.email || 'Пользователь'}</div>
-                <div className="role">{user?.role || 'Роль не указана'}</div>
-              </div>
-            </div>
-            <button className="btn-ghost" onClick={logout}>Выйти</button>
-          </div>
-        </header>
-
-        <div className="page-body">
-          {children}
+          <div style={{ fontWeight: 700 }}>{user?.email || 'Пользователь'}</div>
+          <div className="role">{user?.role || 'Роль не указана'}</div>
         </div>
+      </div>
+      <button className="btn-secondary" onClick={() => setShowPwdModal(true)}>Сменить пароль</button>
+      <button className="btn-ghost" onClick={logout}>Выйти</button>
+    </div>
+  </header>
+
+  <div className="page-body">
+    {children}
+  </div>
+
+  {showPwdModal && (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 1000 }}>
+      <div style={{ background: '#fff', padding: 20, borderRadius: 12, width: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.15)', display: 'grid', gap: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>Смена пароля</h3>
+          <button className="btn-ghost" onClick={closePwdModal}>Закрыть</button>
+        </div>
+        <form onSubmit={handlePasswordSubmit} style={{ display: 'grid', gap: 10 }}>
+          <input type="password" placeholder="Текущий пароль" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required />
+          <input type="password" placeholder="Новый пароль" value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
+          <input type="password" placeholder="Подтверждение нового пароля" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
+          {pwdError && <div className="error">{pwdError}</div>}
+          {pwdSuccess && <div style={{ color: '#16a34a' }}>{pwdSuccess}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn-ghost" onClick={closePwdModal}>Отмена</button>
+            <button type="submit" disabled={pwdLoading}>{pwdLoading ? '...' : 'Сменить'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )}
       </div>
     </div>
   )

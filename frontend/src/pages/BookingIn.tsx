@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import axios from 'axios'
 import { Calendar, dateFnsLocalizer, SlotInfo, View } from 'react-big-calendar'
 import { format, parse, startOfWeek, getDay, addDays } from 'date-fns'
@@ -95,6 +95,7 @@ const BookingIn: React.FC = () => {
   const initialWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
   const [currentDate, setCurrentDate] = useState(new Date())
   const [currentView, setCurrentView] = useState<View>('week')
+  const viewRef = useRef<View>('week')
   const [range, setRange] = useState<{ start: Date; end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) })
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null)
@@ -194,7 +195,7 @@ const BookingIn: React.FC = () => {
     }
 
     const currentRange = rangeOverride || range
-    const viewMode = viewOverride || currentView
+    const viewMode = viewOverride || viewRef.current
     const from = format(currentRange.start, 'yyyy-MM-dd')
     const to = format(currentRange.end, 'yyyy-MM-dd')
 
@@ -393,14 +394,15 @@ const BookingIn: React.FC = () => {
   const onRangeChange = (r: any) => {
     if (Array.isArray(r) && r.length) {
       setRange({ start: r[0], end: r[r.length - 1] })
-      if (selectedObject && selectedSupplier) handleSearch({ start: r[0], end: r[r.length - 1] }, currentView)
+      if (selectedObject && selectedSupplier) handleSearch({ start: r[0], end: r[r.length - 1] }, viewRef.current)
     } else if (r?.start && r?.end) {
       setRange({ start: r.start, end: r.end })
-      if (selectedObject && selectedSupplier) handleSearch({ start: r.start, end: r.end }, currentView)
+      if (selectedObject && selectedSupplier) handleSearch({ start: r.start, end: r.end }, viewRef.current)
     }
   }
 
   const onViewChange = (v: View) => {
+    viewRef.current = v
     setCurrentView(v)
     if (selectedObject && selectedSupplier && selectedTransportType) handleSearch(range, v)
   }

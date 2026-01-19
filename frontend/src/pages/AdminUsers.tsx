@@ -150,6 +150,7 @@ const AdminUsers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       {error && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
       <h3>Пользователи</h3>
 
+
       <div className="card" style={{ marginBottom: 16, padding: 12 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />

@@ -54,6 +54,24 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
+@router.post("/change-password")
+def change_password(
+    payload: schemas.PasswordChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid current password")
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be at least 8 characters")
+    if verify_password(payload.new_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must differ from current password")
+
+    current_user.password_hash = get_password_hash(payload.new_password)
+    db.add(current_user)
+    db.commit()
+    return {"message": "Password updated. Please log in again."}
+
 # Admin: users management
 @router.get("/users", response_model=List[schemas.User])
 def list_users(db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)):
