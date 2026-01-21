@@ -357,6 +357,7 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Поставщик</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Зона</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Тип перевозки</th>
+                <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Кубы</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Транспортный лист</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Статус</th>
                 {user?.role === 'admin' && (
@@ -379,6 +380,7 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
                   <td style={{ padding: 8 }}>{b.supplier_name || '-'}</td>
                   <td style={{ padding: 8 }}>{b.zone_name || '-'}</td>
                   <td style={{ padding: 8 }}>{b.transport_type_name || '-'}</td>
+                  <td style={{ padding: 8 }}>{b.cubes || '-'}</td>
                   <td style={{ padding: 8 }}>{b.transport_sheet || '-'}</td>
                   <td style={{ padding: 8 }}>{b.status}</td>
                   {user?.role === 'admin' && (
