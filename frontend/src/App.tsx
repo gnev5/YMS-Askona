@@ -111,8 +111,9 @@ interface EventItem {
 
 const Login: React.FC = () => {
   const { login } = useAuth()
-  const [email, setEmail] = useState('admin@yms.local')
-  const [password, setPassword] = useState('Admin1234!')
+  const [email, setEmail] = useState('')
+  // держим поле пустым, чтобы пароль не подставлялся автоматически
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -145,8 +146,19 @@ const Login: React.FC = () => {
           <p className="login-subtitle">Планирование ворот, слотов и поставщиков</p>
         </div>
         <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-          <input placeholder="Пароль" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+          <input
+            placeholder="Email"
+            autoComplete="off"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+          />
+          <input
+            placeholder="Пароль"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+          />
           {error && <div className="error">{error}</div>}
           <button disabled={loading}>{loading ? '...' : 'Войти'}</button>
         </form>

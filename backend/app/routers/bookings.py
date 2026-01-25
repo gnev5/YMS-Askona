@@ -674,6 +674,12 @@ def import_bookings_from_excel(
     if dir_normalized not in ("in", "out"):
         raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
 
+    # Normalize and validate direction to enum once, reuse below
+    try:
+        direction_enum = models.BookingDirection(dir_normalized)
+    except Exception:
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+
     if not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Ожидается Excel файл (.xlsx)")
 
