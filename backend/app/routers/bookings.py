@@ -917,6 +917,10 @@ def import_bookings_from_excel(
         for s in chosen_chain:
             db.add(models.BookingTimeSlot(booking_id=new_booking.id, time_slot_id=s.id))
 
+        # Flush immediately so subsequent rows in the same import see the newly occupied slots
+        # when they calculate availability/capacity.
+        db.flush()
+
         if quota and total_quota_volume is not None and cubes is not None and transport_type:
             key = (obj.id, transport_type.id, direction_enum.value, booking_date)
             provisional_usage[key] = provisional_usage.get(key, 0.0) + cubes
