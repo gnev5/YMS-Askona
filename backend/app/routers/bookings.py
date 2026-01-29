@@ -113,6 +113,7 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     # Парсим дату и время начала
     booking_date = datetime.strptime(booking.booking_date, "%Y-%m-%d").date()
     start_time = datetime.strptime(booking.start_time, "%H:%M").time()
+    next_date = booking_date + timedelta(days=1)  # допускаем перетекание на следующий день
     logging.info(f"Parsed booking_date: {booking_date}, start_time: {start_time}")
 
     try:
@@ -133,15 +134,14 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
 
         if initial_slot and initial_slot.is_available and initial_slot.slot_date == booking_date and initial_slot.start_time == start_time:
             logging.info("Initial slot checks passed.")
-            # Получаем слоты для этого дока начиная с выбранного
+            # Получаем слоты для этого дока начиная с выбранного (разрешаем следующий день)
             dock_slots = db.query(models.TimeSlot).join(models.Dock).filter(
                 models.TimeSlot.dock_id == initial_slot.dock_id,
-                models.TimeSlot.slot_date == booking_date,
-                models.TimeSlot.start_time >= start_time,
+                models.TimeSlot.slot_date.in_([booking_date, next_date]),
                 models.TimeSlot.is_available == True,
                 models.Dock.object_id == booking.object_id
-            ).order_by(models.TimeSlot.start_time).all()
-            logging.info(f"Found {len(dock_slots)} subsequent slots for the same dock.")
+            ).order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
+            logging.info(f"Found {len(dock_slots)} subsequent slots for the same dock (can span to next day).")
 
             # Найдем индекс начального слота
             start_index = None
@@ -156,12 +156,17 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                 candidate_chain = dock_slots[start_index:start_index + required_slots]
                 logging.info(f"Candidate chain of {len(candidate_chain)} slots: {[s.id for s in candidate_chain]}")
 
-                # Проверим непрерывность
+                # Проверим непрерывность по datetime (учитывая переход на следующий день)
                 is_continuous = True
                 for j in range(len(candidate_chain) - 1):
-                    if candidate_chain[j].end_time != candidate_chain[j + 1].start_time:
+                    current_end = datetime.combine(candidate_chain[j].slot_date, candidate_chain[j].end_time)
+                    next_start = datetime.combine(candidate_chain[j + 1].slot_date, candidate_chain[j + 1].start_time)
+                    if current_end != next_start:
                         is_continuous = False
-                        logging.info(f"Chain is not continuous at index {j}. Slot {candidate_chain[j].id} ends at {candidate_chain[j].end_time}, next slot {candidate_chain[j+1].id} starts at {candidate_chain[j+1].start_time}")
+                        logging.info(
+                            f"Chain is not continuous at index {j}. Slot {candidate_chain[j].id} "
+                            f"ends at {current_end}, next slot {candidate_chain[j+1].id} starts at {next_start}"
+                        )
                         break
                 
                 if is_continuous:
@@ -247,12 +252,13 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         logging.info("Specific slot not booked. Searching for any available slot.")
         # Находим доступные слоты
         available_slots = db.query(models.TimeSlot).join(models.Dock).filter(
-            models.TimeSlot.slot_date == booking_date,
-            models.TimeSlot.start_time >= start_time,
+            models.TimeSlot.slot_date.in_([booking_date, next_date]),
             models.TimeSlot.is_available == True,
             models.Dock.object_id == booking.object_id
-        ).order_by(models.TimeSlot.start_time).all()
-        logging.info(f"Found {len(available_slots)} total available slots for the object.")
+        ).filter(
+            (models.TimeSlot.slot_date > booking_date) | (models.TimeSlot.start_time >= start_time)
+        ).order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
+        logging.info(f"Found {len(available_slots)} total available slots for the object (spanning start and next day).")
     else:
         available_slots = []
 
@@ -294,8 +300,8 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     for dock_id in sorted_dock_ids:
         logging.info(f"--- Checking Dock ID: {dock_id} ---")
         dock_slots = slots_by_dock[dock_id]
-        # Сортируем слоты по времени
-        dock_slots.sort(key=lambda x: x.start_time)
+        # Сортируем слоты по дате и времени, чтобы корректно обрабатывать переход через сутки
+        dock_slots.sort(key=lambda x: (x.slot_date, x.start_time))
         
         dock = dock_map.get(dock_id)
         obj = dock.object if dock else None
@@ -317,7 +323,7 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
 
         # Ищем слоты строго начиная с запрошенного времени; допускаем перерывы в расписании,
         # но не допускаем занятые слоты (capacity) в середине цепочки.
-        start_idx = next((idx for idx, s in enumerate(dock_slots) if s.start_time == start_time), None)
+        start_idx = next((idx for idx, s in enumerate(dock_slots) if s.slot_date == booking_date and s.start_time == start_time), None)
         if start_idx is None:
             logging.info(f"No starting slot at {start_time} in dock {dock_id}. Skipping dock.")
             continue
