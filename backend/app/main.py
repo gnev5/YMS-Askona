@@ -21,7 +21,7 @@ FRONTEND_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:4173",
     "http://127.0.0.1:4173",
-    "http://130.193.53.117:5173"
+    "http://158.160.94.205:5173"
 ]
 
 app.add_middleware(

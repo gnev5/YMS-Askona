@@ -2,6 +2,11 @@ services:
   db:
     image: postgres:16
     container_name: yms_db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-yms}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yms_password}
@@ -29,6 +34,11 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: yms_backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: yms
       POSTGRES_PASSWORD: yms_password
@@ -49,6 +59,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: yms_frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file: .env
     environment:
       CHOKIDAR_USEPOLLING: "true"

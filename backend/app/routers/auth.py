@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from .. import models, schemas
-from ..security import get_password_hash, verify_password, create_access_token
+from ..security import get_password_hash, verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from ..deps import get_current_user, get_current_admin
 from typing import List
 
@@ -45,7 +45,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     print("/auth/login: password verified")
-    access_token = create_access_token(subject=user.email, expires_delta=timedelta(minutes=60))
+    access_token = create_access_token(subject=user.email, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     print("/auth/login: token issued")
     return {"access_token": access_token, "token_type": "bearer"}
 
