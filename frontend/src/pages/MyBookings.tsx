@@ -25,8 +25,11 @@ interface Booking {
   transport_type_name?: string
   cubes?: number
   transport_sheet?: string
+  user_login?: string
   user_email?: string
   user_full_name?: string
+  is_owner?: boolean
+  can_modify?: boolean
   object_id?: number
   object_name?: string
 }
@@ -360,9 +363,7 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Кубы</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Транспортный лист</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Статус</th>
-                {user?.role === 'admin' && (
-                  <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Пользователь</th>
-                )}
+                <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Пользователь</th>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Действия</th>
               </tr>
             </thead>
@@ -383,25 +384,27 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
                   <td style={{ padding: 8 }}>{b.cubes || '-'}</td>
                   <td style={{ padding: 8 }}>{b.transport_sheet || '-'}</td>
                   <td style={{ padding: 8 }}>{b.status}</td>
-                  {user?.role === 'admin' && (
-                    <td style={{ padding: 8 }}>{b.user_full_name || b.user_email || '-'}</td>
-                  )}
+                  <td style={{ padding: 8 }}>{b.user_full_name || b.user_email || b.user_login || '-'}</td>
                   <td style={{ padding: 8 }}>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button 
-                        onClick={() => openTransportSheetModal(b)}
-                        style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: 4 }}
-                      >
-                        Изменить лист
-                      </button>
-                    {b.status === 'confirmed' && (
-                      <button 
-                        onClick={() => cancelBooking(b.id)}
-                        style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: 4 }}
-                      >
-                        Отменить
-                      </button>
-                    )}
+                      {b.can_modify && (
+                        <>
+                          <button 
+                            onClick={() => openTransportSheetModal(b)}
+                            style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: 4 }}
+                          >
+                            Изменить лист
+                          </button>
+                          {b.status === 'confirmed' && (
+                            <button 
+                              onClick={() => cancelBooking(b.id)}
+                              style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: 4 }}
+                            >
+                              Отменить
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

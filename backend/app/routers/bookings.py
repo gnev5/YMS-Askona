@@ -40,6 +40,7 @@ def _serialize_booking(db: Session, booking: models.Booking, include_user: bool 
         "booking_date": first_slot.slot_date.isoformat(),
         "start_time": first_slot.start_time.strftime("%H:%M:%S"),
         "end_time": last_slot.end_time.strftime("%H:%M:%S"),
+        "user_id": booking.user_id,
         "vehicle_plate": booking.vehicle_plate or "",
         "driver_name": booking.driver_full_name or "",
         "driver_full_name": booking.driver_full_name or "",
@@ -61,6 +62,7 @@ def _serialize_booking(db: Session, booking: models.Booking, include_user: bool 
 
     if include_user and booking.user:
         data["user_email"] = booking.user.email
+        data["user_login"] = booking.user.email  # login = email
         data["user_full_name"] = booking.user.full_name
 
     return data
@@ -462,10 +464,10 @@ def cancel_booking(
     current_user: models.User = Depends(get_current_user)
 ):
     """Отменить запись"""
-    booking = db.query(models.Booking).filter(
-        models.Booking.id == booking_id,
-        models.Booking.user_id == current_user.id
-    ).first()
+    booking_query = db.query(models.Booking).filter(models.Booking.id == booking_id)
+    if current_user.role != models.UserRole.admin:
+        booking_query = booking_query.filter(models.Booking.user_id == current_user.id)
+    booking = booking_query.first()
     
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -500,22 +502,29 @@ def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = 
     for booking in bookings:
         serialized = _serialize_booking(db, booking, include_user=True)
         if serialized:
+            is_owner = booking.user_id == current_user.id
+            serialized["is_owner"] = is_owner
+            # админ и так здесь, но оставим логику единообразно
+            serialized["can_modify"] = True
             result.append(serialized)
     
     return result
 
 @router.get("/my", response_model=List[schemas.BookingWithDetails])
 def get_my_bookings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Получить мои записи (обновленная версия)"""
+    """Получить все записи (бывшие \"мои\"), видны всем пользователям"""
     bookings = db.query(models.Booking).filter(
-        models.Booking.user_id == current_user.id,
         models.Booking.status == "confirmed"
     ).order_by(models.Booking.created_at.desc()).all()
     
     result = []
     for booking in bookings:
-        serialized = _serialize_booking(db, booking)
+        # Показываем владельца и права на изменение
+        serialized = _serialize_booking(db, booking, include_user=True)
         if serialized:
+            is_owner = booking.user_id == current_user.id
+            serialized["is_owner"] = is_owner
+            serialized["can_modify"] = is_owner or current_user.role == models.UserRole.admin
             result.append(serialized)
     
     return result
@@ -544,10 +553,15 @@ def update_transport_sheet(
     db.commit()
     db.refresh(booking)
 
-    serialized = _serialize_booking(db, booking, include_user=current_user.role == models.UserRole.admin)
+    # Всегда включаем данные автора, чтобы на фронте видно, кто создал бронь
+    serialized = _serialize_booking(db, booking, include_user=True)
     if not serialized:
         raise HTTPException(status_code=500, detail="Booking slots not found")
 
+    is_owner = booking.user_id == current_user.id
+    serialized["is_owner"] = is_owner
+    serialized["can_modify"] = is_owner or current_user.role == models.UserRole.admin
+    
     return serialized
 
 @router.get("/{booking_id}/slots")
@@ -558,8 +572,7 @@ def get_booking_slots(
 ):
     """Получить слоты конкретной записи"""
     booking = db.query(models.Booking).filter(
-        models.Booking.id == booking_id,
-        models.Booking.user_id == current_user.id
+        models.Booking.id == booking_id
     ).first()
     
     if not booking:

@@ -245,9 +245,16 @@ class BookingWithDetails(BaseModel):
     transport_sheet: Optional[str] = None
     object_id: Optional[int] = None
     object_name: Optional[str] = None
+    user_id: Optional[int] = None
     user_email: Optional[str] = None
+    user_login: Optional[str] = None
     user_full_name: Optional[str] = None
     booking_type: Optional[str] = None
+    is_owner: bool = False
+    can_modify: bool = False
+
+    class Config:
+        from_attributes = True
 
 # Supplier schemas
 class SupplierBase(BaseModel):
