@@ -24,7 +24,6 @@ import AdminBackups from './pages/AdminBackups'
 import AdminVolumeQuotas from './pages/AdminVolumeQuotas'
 
 type Page =
-  | 'calendar'
   | 'admin-schedule'
   | 'admin-docks'
   | 'admin-vehicle-types'
@@ -43,7 +42,6 @@ type Page =
   | 'admin-backups'
 
 const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, children?: {id: Page, label: string}[] }[] = [
-  { id: 'calendar', label: 'Календарь', icon: 'calendar_today' },
   { id: 'my-bookings', label: 'Мои бронирования', icon: 'receipt_long' },
   {
     id: 'booking-in',
@@ -598,49 +596,46 @@ const AppShell: React.FC<{ page: Page; onNavigate: (p: Page) => void; children: 
 
 const App: React.FC = () => {
   const { token } = useAuth()
-  const [page, setPage] = useState<Page>('calendar')
-  const [calendarKey, setCalendarKey] = useState(0)
+  const [page, setPage] = useState<Page>('my-bookings')
 
   if (!token) return <Login />
-
-  const refreshCalendar = () => setCalendarKey(prev => prev + 1)
 
   const renderPage = () => {
     switch (page) {
       case 'admin-schedule':
-        return <AdminSchedule onBack={() => setPage('calendar')} onOpenTimeSlots={() => setPage('admin-time-slots')} />
+        return <AdminSchedule onBack={() => setPage('my-bookings')} onOpenTimeSlots={() => setPage('admin-time-slots')} />
       case 'admin-docks':
-        return <AdminDocks onBack={() => setPage('calendar')} />
+        return <AdminDocks onBack={() => setPage('my-bookings')} />
       case 'admin-vehicle-types':
-        return <AdminVehicleTypes onBack={() => setPage('calendar')} />
+        return <AdminVehicleTypes onBack={() => setPage('my-bookings')} />
       case 'admin-zones':
-        return <AdminZones onBack={() => setPage('calendar')} />
+        return <AdminZones onBack={() => setPage('my-bookings')} />
       case 'admin-suppliers':
-        return <AdminSuppliers onBack={() => setPage('calendar')} />
+        return <AdminSuppliers onBack={() => setPage('my-bookings')} />
       case 'admin-transport-types':
-        return <AdminTransportTypes onBack={() => setPage('calendar')} />
+        return <AdminTransportTypes onBack={() => setPage('my-bookings')} />
       case 'admin-time-slots':
         return <AdminTimeSlots onBack={() => setPage('admin-schedule')} />
       case 'my-bookings':
-        return <MyBookings onBack={() => setPage('calendar')} onBookingCancelled={refreshCalendar} />
+        return <MyBookings />
       case 'admin-users':
-        return <AdminUsers onBack={() => setPage('calendar')} />
+        return <AdminUsers onBack={() => setPage('my-bookings')} />
       case 'admin-objects':
-        return <AdminObjects onBack={() => setPage('calendar')} />
+        return <AdminObjects onBack={() => setPage('my-bookings')} />
       case 'admin-prr-limits':
-        return <AdminPrrLimits onBack={() => setPage('calendar')} />
+        return <AdminPrrLimits onBack={() => setPage('my-bookings')} />
       case 'admin-volume-quotas':
-        return <AdminVolumeQuotas onBack={() => setPage('calendar')} />
+        return <AdminVolumeQuotas onBack={() => setPage('my-bookings')} />
       case 'admin-backups':
-        return <AdminBackups onBack={() => setPage('calendar')} />
+        return <AdminBackups onBack={() => setPage('my-bookings')} />
       case 'analytics':
-        return <Analytics onBack={() => setPage('calendar')} />
+        return <Analytics onBack={() => setPage('my-bookings')} />
       case 'booking-in':
         return <BookingIn />
       case 'booking-out':
         return <BookingOut />
       default:
-        return <CalendarView goToPage={setPage} key={calendarKey} />
+        return <MyBookings />
     }
   }
 
@@ -652,3 +647,4 @@ const App: React.FC = () => {
 }
 
 export default App
+

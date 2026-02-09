@@ -36,9 +36,54 @@ const AdminUsers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [userSuppliers, setUserSuppliers] = useState<{[userId: number]: Supplier[]}>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
   const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'carrier' })
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [showSupplierModal, setShowSupplierModal] = useState(false)
+
+  const downloadTemplate = async () => {
+    setError(null)
+    try {
+      const { data } = await axios.get(`${API_BASE}/auth/users/template`, {
+        headers,
+        responseType: 'blob',
+      })
+      const blobUrl = window.URL.createObjectURL(new Blob([data]))
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.setAttribute('download', 'users_template.xlsx')
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(blobUrl)
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Не удалось скачать шаблон пользователей')
+    }
+  }
+
+  const uploadUsers = async (file: File) => {
+    setError(null)
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await axios.post(`${API_BASE}/auth/users/import`, formData, {
+        headers: {
+          ...headers,
+          'Content-Type': 'multipart/form-data',
+        },
+      })
+      load()
+      const msg = `Загружено: ${data.created}. Пропущено: ${data.skipped}.`
+      if (data.errors?.length) {
+        setError([msg, ...data.errors].join(' '))
+      }
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Не удалось загрузить пользователей')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const load = async () => {
     setLoading(true); setError(null)
@@ -146,6 +191,24 @@ const AdminUsers: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     <div style={{ padding: 16 }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <button onClick={onBack}>Назад</button>
+        <button onClick={downloadTemplate}>Скачать шаблон загрузки</button>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input
+            type="file"
+            accept=".xlsx"
+            style={{ display: 'none' }}
+            onChange={e => {
+              const file = e.target.files?.[0]
+              if (file) {
+                uploadUsers(file)
+                e.target.value = ''
+              }
+            }}
+          />
+          <span className="btn-secondary" style={{ padding: '6px 12px' }}>
+            {uploading ? 'Загрузка...' : 'Загрузить пользователей'}
+          </span>
+        </label>
       </div>
       {error && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
       <h3>Пользователи</h3>

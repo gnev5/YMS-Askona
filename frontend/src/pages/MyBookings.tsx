@@ -40,25 +40,40 @@ type Filters = {
   transport_type: string
   vehicle_plate: string
   driver_name: string
+  transport_sheet: string
   user_email: string
   objects: number[]
   date_from: string
   date_to: string
 }
 
-const defaultFilters = (): Filters => ({
-  supplier: '',
-  zone: '',
-  transport_type: '',
-  vehicle_plate: '',
-  driver_name: '',
-  user_email: '',
-  objects: [],
-  date_from: '',
-  date_to: '',
-})
+const toYmd = (date: Date) => {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
-const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void }> = ({ onBack, onBookingCancelled }) => {
+const defaultFilters = (): Filters => {
+  const today = new Date()
+  const inThreeDays = new Date(today)
+  inThreeDays.setDate(today.getDate() + 3)
+
+  return {
+    supplier: '',
+    zone: '',
+    transport_type: '',
+    vehicle_plate: '',
+    driver_name: '',
+    transport_sheet: '',
+    user_email: '',
+    objects: [],
+    date_from: toYmd(today),
+    date_to: toYmd(inThreeDays),
+  }
+}
+
+const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => void }> = ({ onBack, onBookingCancelled }) => {
   const { user } = useAuth()
   const [bookings, setBookings] = useState<Booking[]>([])
   const [filteredBookings, setFilteredBookings] = useState<Booking[]>([])
@@ -126,6 +141,10 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
         const driverName = (b.driver_full_name || b.driver_name || '').toLowerCase()
         return driverName.includes(filters.driver_name.toLowerCase())
       })
+    }
+
+    if (filters.transport_sheet) {
+      filtered = filtered.filter(b => (b.transport_sheet || '').toLowerCase().includes(filters.transport_sheet.toLowerCase()))
     }
 
     if (filters.objects.length > 0) {
@@ -201,9 +220,11 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
 
   return (
     <div style={{ padding: 16 }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button onClick={onBack}>Назад</button>
-      </div>
+      {onBack && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button onClick={onBack}>Назад</button>
+        </div>
+      )}
 
       {error && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
       {success && <div style={{ color: '#16a34a', marginBottom: 8 }}>{success}</div>}
@@ -267,6 +288,16 @@ const MyBookings: React.FC<{ onBack: () => void; onBookingCancelled?: () => void
               value={filters.driver_name}
               onChange={e => setFilters(prev => ({ ...prev, driver_name: e.target.value }))}
               placeholder="Введите ФИО водителя"
+              style={{ width: '100%', padding: 8, fontSize: '14px' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: '14px' }}>Транспортный лист:</label>
+            <input
+              type="text"
+              value={filters.transport_sheet}
+              onChange={e => setFilters(prev => ({ ...prev, transport_sheet: e.target.value }))}
+              placeholder="Введите номер ТЛ"
               style={{ width: '100%', padding: 8, fontSize: '14px' }}
             />
           </div>

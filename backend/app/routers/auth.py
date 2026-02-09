@@ -1,13 +1,16 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from io import BytesIO
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from fastapi.responses import StreamingResponse
 
 from ..db import get_db
 from .. import models, schemas
 from ..security import get_password_hash, verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from ..deps import get_current_user, get_current_admin
 from typing import List
+from openpyxl import Workbook, load_workbook
 
 router = APIRouter()
 
@@ -125,3 +128,87 @@ def delete_user_admin(user_id: int, db: Session = Depends(get_db), _: models.Use
     db.delete(user)
     db.commit()
     return {"message": "User deleted"}
+
+
+@router.get("/users/template")
+def download_user_template(_: models.User = Depends(get_current_admin)):
+    """Provide Excel template for bulk user creation."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "users"
+    headers = ["email", "password", "full_name", "role"]
+    ws.append(headers)
+    # sample rows for clarity
+    ws.append(["user@example.com", "Password123!", "Иван Иванов", "carrier"])
+    ws.append(["admin@yms.local", "Admin1234!", "Администратор", "admin"])
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = "users_template.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.post("/users/import")
+def import_users_from_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_admin),
+):
+    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Invalid file format. Please upload an .xlsx file")
+
+    try:
+        wb = load_workbook(filename=BytesIO(file.file.read()))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to read Excel file")
+
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(status_code=400, detail="Excel file is empty")
+
+    headers = [str(h).strip().lower() if h else "" for h in rows[0]]
+    expected = ["email", "password", "full_name", "role"]
+    if headers[: len(expected)] != expected:
+        raise HTTPException(status_code=400, detail=f"Invalid headers. Expected {expected}")
+
+    created = 0
+    skipped = 0
+    errors: List[str] = []
+
+    for idx, row in enumerate(rows[1:], start=2):
+        email, password, full_name, role_raw = row[:4]
+        if not email or not password or not full_name:
+            skipped += 1
+            errors.append(f"Row {idx}: missing required fields")
+            continue
+        try:
+            role = models.UserRole(str(role_raw).lower()) if role_raw else models.UserRole.carrier
+        except ValueError:
+            skipped += 1
+            errors.append(f"Row {idx}: invalid role '{role_raw}'")
+            continue
+
+        existing = db.query(models.User).filter(models.User.email == email).first()
+        if existing:
+            skipped += 1
+            errors.append(f"Row {idx}: user {email} already exists")
+            continue
+
+        user = models.User(
+            email=email,
+            full_name=full_name,
+            password_hash=get_password_hash(str(password)),
+            role=role,
+        )
+        db.add(user)
+        created += 1
+
+    db.commit()
+    return {"created": created, "skipped": skipped, "errors": errors}
