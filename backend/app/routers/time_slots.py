@@ -116,9 +116,12 @@ def list_time_slots(
             models.Supplier.name.label("supplier_name"),
             models.Booking.cubes.label("cubes"),
             models.Booking.transport_sheet.label("transport_sheet"),
+            models.User.full_name.label("user_full_name"),
+            models.User.email.label("user_email"),
         )
         .join(models.Booking, models.Booking.id == models.BookingTimeSlot.booking_id)
         .outerjoin(models.Supplier, models.Supplier.id == models.Booking.supplier_id)
+        .outerjoin(models.User, models.User.id == models.Booking.user_id)
         .filter(models.BookingTimeSlot.time_slot_id.in_(slot_ids))
         .filter(models.Booking.status == "confirmed")
         .all()
@@ -153,6 +156,8 @@ def list_time_slots(
                 supplier_name=row.supplier_name,
                 cubes=row.cubes,
                 transport_sheet=row.transport_sheet,
+                user_full_name=row.user_full_name,
+                user_email=row.user_email,
                 is_start=is_start,
             )
         )

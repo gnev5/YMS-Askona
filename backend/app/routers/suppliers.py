@@ -184,8 +184,8 @@ def download_import_template(
     wb = Workbook()
     ws = wb.active
     ws.title = "suppliers"
-    ws.append(["name", "zone_name", "vehicle_types", "comment"])
-    ws.append(["ООО Пример", "Эрго/решетки/корпус", "Фура 20',Газель", "Комментарий (опционально)"])
+    ws.append(["name", "zone_name", "vehicle_types", "transport_types", "comment"])
+    ws.append(["ООО Пример", "Эрго/решетки/корпус", "Фура 20',Газель", "Закупка,Отгрузка", "Комментарий (опционально)"])
 
     ws_zones = wb.create_sheet("zones")
     ws_zones.append(["zone_name"])
@@ -197,6 +197,11 @@ def download_import_template(
     ws_vehicle_types.append(["vehicle_type_name"])
     for vt in db.query(VehicleType).all():
         ws_vehicle_types.append([vt.name])
+
+    ws_transport_types = wb.create_sheet("transport_types")
+    ws_transport_types.append(["transport_type_name"])
+    for tt in db.query(TransportTypeRef).all():
+        ws_transport_types.append([tt.name])
 
     buf = BytesIO()
     wb.save(buf)
@@ -230,13 +235,14 @@ def import_suppliers(
     except Exception:
         raise HTTPException(status_code=400, detail="Не удалось прочитать Excel файл")
 
-    expected_headers = ["name", "zone_name", "vehicle_types", "comment"]
+    expected_headers = ["name", "zone_name", "vehicle_types", "transport_types", "comment"]
     headers = [str(cell.value).strip() if cell.value is not None else "" for cell in next(ws.iter_rows(min_row=1, max_row=1))]
     if [h.lower() for h in headers] != expected_headers:
         raise HTTPException(status_code=400, detail=f"Ожидается заголовок: {', '.join(expected_headers)}")
 
     zone_map = {z.name.strip().lower(): z for z in db.query(Zone).all()}
     vehicle_type_map = {vt.name.strip().lower(): vt for vt in db.query(VehicleType).all()}
+    transport_type_map = {tt.name.strip().lower(): tt for tt in db.query(TransportTypeRef).all()}
     existing_supplier_names = {s.name.strip().lower() for s in db.query(Supplier).all()}
 
     errors: list[SupplierImportError] = []
@@ -244,13 +250,14 @@ def import_suppliers(
     names_in_file: set[str] = set()
 
     for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        raw_name, raw_zone_name, raw_vehicle_types, raw_comment = row
+        raw_name, raw_zone_name, raw_vehicle_types, raw_transport_types, raw_comment = row
         name = (raw_name or "").strip()
         zone_name = (raw_zone_name or "").strip()
         vehicle_types_raw = (raw_vehicle_types or "").strip()
+        transport_types_raw = (raw_transport_types or "").strip()
         comment = (raw_comment or "") if raw_comment else None
 
-        if not name and not zone_name and not vehicle_types_raw and not comment:
+        if not name and not zone_name and not vehicle_types_raw and not transport_types_raw and not comment:
             continue  # пустая строка
 
         row_errors = []
@@ -276,6 +283,15 @@ def import_suppliers(
                 else:
                     vehicle_types.append(vt)
 
+        transport_types: list[TransportTypeRef] = []
+        if transport_types_raw:
+            for tt_name in [t.strip() for t in transport_types_raw.split(",") if t.strip()]:
+                tt = transport_type_map.get(tt_name.lower())
+                if not tt:
+                    row_errors.append(f"transport_type '{tt_name}' не найден")
+                else:
+                    transport_types.append(tt)
+
         if row_errors:
             errors.append(SupplierImportError(row_number=idx, message="; ".join(row_errors)))
             continue
@@ -283,6 +299,7 @@ def import_suppliers(
         # Все проверки прошли
         supplier = Supplier(name=name, comment=comment, zone_id=zone_map[zone_name.lower()].id)
         supplier.vehicle_types = vehicle_types
+        supplier.transport_types = transport_types
         db.add(supplier)
         names_in_file.add(name_key)
         created += 1

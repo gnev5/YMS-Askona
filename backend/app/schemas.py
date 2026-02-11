@@ -187,6 +187,8 @@ class TimeSlotBookingInfo(BaseModel):
     supplier_name: Optional[str] = None
     cubes: Optional[float] = None
     transport_sheet: Optional[str] = None
+    user_full_name: Optional[str] = None
+    user_email: Optional[str] = None
     is_start: bool = False
 
 class TimeSlotWithBookings(TimeSlotWithOccupancy):

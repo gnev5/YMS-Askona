@@ -33,6 +33,9 @@ interface SlotBookingInfo {
   supplier_name?: string
   transport_sheet?: string | null
   cubes?: number | null
+  user_full_name?: string | null
+  user_email?: string | null
+  is_start?: boolean
 }
 
 interface Dock {
@@ -68,6 +71,7 @@ interface EventItem {
   quotaTotal?: number | null
   quotaRemaining?: number
   isStart?: boolean
+  bookings?: SlotBookingInfo[]
 }
 
 interface QuotaAvailability {
@@ -92,6 +96,7 @@ const BookingOut: React.FC = () => {
   const [range, setRange] = useState<{ start: Date; end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) })
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null)
+  const [startInfo, setStartInfo] = useState<{ open: boolean; bookings: SlotBookingInfo[] }>({ open: false, bookings: [] })
   const filteredDocks = selectedObject ? docks.filter(d => d.object_id === selectedObject && (d.dock_type === 'exit' || d.dock_type === 'universal')) : []
 
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -212,7 +217,7 @@ const BookingOut: React.FC = () => {
             const tooltip = formatBookingTooltip(slot.bookings)
 
             const isStart = (slot.bookings || []).some(b => (b as any).is_start)
-            const displayTitle = isStart ? `▶ ${title}` : title
+            const displayTitle = title
 
             evts.push({
               id: `slot-${slot.id}-${d.toDateString()}`,
@@ -245,6 +250,7 @@ const BookingOut: React.FC = () => {
 
             const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0)
             const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0)
+            const combinedBookings = slots.flatMap(s => s.bookings || [])
             let status: 'free' | 'partial' | 'full' = 'free'
             if (totalOccupancy === 0) {
               status = 'free'
@@ -263,11 +269,12 @@ const BookingOut: React.FC = () => {
               capacity: totalCapacity,
               occupancy: totalOccupancy,
               status,
+              bookings: combinedBookings,
             }
 
             const availableDocks = slots.filter(s => s.occupancy < s.capacity).map(s => s.dock_id).filter((id): id is number => typeof id === 'number')
-            const isStart = slots.some(s => (s.bookings || []).some(b => (b as any).is_start))
-            const displayTitle = isStart ? `▶ ${title}` : title
+            const isStart = combinedBookings.some(b => (b as any).is_start)
+            const displayTitle = title
 
             evts.push({
               id: `combined-${timeKey}-${d.toDateString()}`,
@@ -276,8 +283,9 @@ const BookingOut: React.FC = () => {
               end,
               resource: combinedResource,
               availableDocks,
-              tooltip: formatBookingTooltip(slots.flatMap(s => s.bookings || [])),
+              tooltip: formatBookingTooltip(combinedBookings),
               isStart,
+              bookings: combinedBookings,
             })
           })
         }
@@ -319,11 +327,50 @@ const BookingOut: React.FC = () => {
     if (match) openModalForEvent(match)
   }
 
+  const extractStartBookings = (evt: EventItem) => {
+    const bookings = ((evt.resource as any)?.bookings || evt.bookings || []) as SlotBookingInfo[]
+    const starts = bookings.filter(b => b && b.is_start)
+    const unique: SlotBookingInfo[] = []
+    const seen = new Set<number>()
+    starts.forEach(b => {
+      if (!seen.has(b.id)) {
+        seen.add(b.id)
+        unique.push(b)
+      }
+    })
+    return unique
+  }
+
   const openModalForEvent = (evt: EventItem) => {
     if (evt.isQuota) return
     if (String((evt as any).resource?.status || '').toLowerCase() === 'full') return
     setSelectedSlot({ start: evt.start, end: evt.end, slotId: (evt as any).resource?.id, availableDocks: evt.availableDocks })
     setIsModalOpen(true)
+  }
+
+  const EventCell: React.FC<{ event: EventItem }> = ({ event }) => {
+    const starts = event.isStart ? extractStartBookings(event) : []
+    const showStartInfo = (e: React.MouseEvent) => {
+      e.stopPropagation()
+      if (starts.length > 0) setStartInfo({ open: true, bookings: starts })
+    }
+    const titleText = String(event.title || '')
+    const triangle = event.isStart ? '▸' : null
+    const rest = titleText
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {triangle && (
+          <span
+            onClick={showStartInfo}
+            style={{ cursor: 'pointer', color: '#1e3a8a', fontWeight: 800, fontSize: 18, lineHeight: '18px' }}
+            title="Начало бронирования"
+          >
+            {triangle}
+          </span>
+        )}
+        <span>{rest}</span>
+      </div>
+    )
   }
 
   const handleBookingSuccess = () => {
@@ -434,8 +481,9 @@ const BookingOut: React.FC = () => {
     }
 
     const status = String((event as any).resource?.status || '').toLowerCase()
-    let bg = '#e6ffed'
-    let border = '#22c55e'
+    const hasStart = !!event.isStart
+    let bg = '#bbf7d0'     // brighter green for free slots
+    let border = '#16a34a' // deeper green border
     let cursor = 'pointer'
     let title = event.tooltip || 'Доступно'
     let boxShadow: string | undefined
@@ -449,6 +497,10 @@ const BookingOut: React.FC = () => {
       border = '#ef4444'
       cursor = 'not-allowed'
       if (!event.tooltip) title = 'Нет свободных слотов'
+    }
+
+    if (hasStart) {
+      cursor = 'pointer'
     }
 
     if (event.isStart) {
@@ -547,6 +599,7 @@ const BookingOut: React.FC = () => {
           tooltipAccessor="tooltip"
           dayPropGetter={dayPropGetter}
           eventPropGetter={eventPropGetter}
+          components={{ event: EventCell as any }}
           
           culture="ru"
         />
@@ -565,6 +618,59 @@ const BookingOut: React.FC = () => {
         prefillTransportTypeId={selectedTransportType}
         bookingType="out"
       />
+
+      {startInfo.open && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+          }}
+          onClick={() => setStartInfo({ open: false, bookings: [] })}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              backgroundColor: 'white',
+              borderRadius: 10,
+              padding: 18,
+              width: 'min(460px, 90vw)',
+              boxShadow: '0 12px 30px rgba(0,0,0,0.18)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <h4 style={{ margin: 0 }}>Начавшиеся бронирования</h4>
+              <button
+                onClick={() => setStartInfo({ open: false, bookings: [] })}
+                style={{ border: 'none', background: 'transparent', fontSize: 18, cursor: 'pointer' }}
+                aria-label="Закрыть"
+              >
+                ×
+              </button>
+            </div>
+            {startInfo.bookings.length === 0 ? (
+              <div style={{ color: '#6b7280' }}>Нет данных</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {startInfo.bookings.map(b => (
+                  <div key={b.id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>ТЛ: {b.transport_sheet || '—'}</div>
+                    <div style={{ color: '#4b5563', fontSize: 14 }}>
+                      <div>Поставщик: {b.supplier_name || '—'}</div>
+                      <div>Создал: {b.user_full_name || b.user_email || '—'}</div>
+                      <div>Кубы: {b.cubes ?? '—'}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
