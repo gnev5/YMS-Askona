@@ -143,7 +143,7 @@ def create_booking(
     if not chosen_slots:
         raise HTTPException(
             status_code=409, 
-            detail="No available time slots found for the requested period"
+            detail="На запрошенный период не найдено доступных временных слотов"
         )
     
     # Создаем запись

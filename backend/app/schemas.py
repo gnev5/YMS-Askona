@@ -202,6 +202,16 @@ class TimeSlotCreate(BaseModel):
     capacity: int
     is_available: bool = True
 
+
+class TimeSlotBulkCreate(BaseModel):
+    dock_ids: List[int]
+    start_date: date
+    end_date: date
+    start_time: time
+    end_time: time
+    capacity: int
+    is_available: bool = True
+
 # Booking schemas
 class BookingBase(BaseModel):
     vehicle_plate: Optional[str] = None

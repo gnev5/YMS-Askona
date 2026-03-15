@@ -168,7 +168,7 @@ def test_create_booking_capacity_limit(test_client, db_session, test_user_fixtur
 
     assert response2.status_code == 409
 
-    assert "No available time slots found" in response2.json()["detail"]
+    assert "не найдено доступных временных слотов" in response2.json()["detail"].lower()
 
 
 def test_create_booking_on_exit_dock_fails(test_client, db_session):
@@ -214,8 +214,80 @@ def test_create_booking_on_exit_dock_fails(test_client, db_session):
 
     # 3. Assert: Проверяем, что получили ошибку
     assert response.status_code == 409
-    assert "No available time slots found" in response.json()["detail"]
+    assert "не найдено доступных временных слотов" in response.json()["detail"].lower()
 
 
 
 
+
+def test_create_booking_does_not_fallback_to_dock_from_other_supplier_zone(test_client, db_session, test_user_fixture):
+    zone_a = models.Zone(name="Zone A")
+    zone_b = models.Zone(name="Zone B")
+    db_session.add_all([zone_a, zone_b])
+    db_session.commit()
+
+    supplier = models.Supplier(name="Supplier A", zone_id=zone_a.id)
+    db_session.add(supplier)
+    db_session.commit()
+
+    test_object = models.Object(name="Zone Test Object", object_type="warehouse")
+    db_session.add(test_object)
+    db_session.commit()
+
+    dock_zone_a = models.Dock(name="Dock Zone A", dock_type="entrance", object_id=test_object.id)
+    dock_zone_b = models.Dock(name="Dock Zone B", dock_type="entrance", object_id=test_object.id)
+    dock_zone_a.available_zones.append(zone_a)
+    dock_zone_b.available_zones.append(zone_b)
+    db_session.add_all([dock_zone_a, dock_zone_b])
+    db_session.commit()
+
+    test_vehicle_type = models.VehicleType(name="Zone Vehicle", duration_minutes=30)
+    db_session.add(test_vehicle_type)
+    db_session.commit()
+
+    slot_zone_a = models.TimeSlot(
+        dock_id=dock_zone_a.id,
+        slot_date=date.today(),
+        start_time=time(11, 0),
+        end_time=time(11, 30),
+        capacity=1,
+    )
+    slot_zone_b = models.TimeSlot(
+        dock_id=dock_zone_b.id,
+        slot_date=date.today(),
+        start_time=time(11, 0),
+        end_time=time(11, 30),
+        capacity=1,
+    )
+    db_session.add_all([slot_zone_a, slot_zone_b])
+    db_session.commit()
+
+    existing_booking = models.Booking(
+        user_id=test_user_fixture.id,
+        vehicle_type_id=test_vehicle_type.id,
+        status="confirmed",
+        booking_type=models.BookingDirection.inbound,
+    )
+    db_session.add(existing_booking)
+    db_session.flush()
+    db_session.add(models.BookingTimeSlot(booking_id=existing_booking.id, time_slot_id=slot_zone_a.id))
+    db_session.commit()
+
+    booking_data = {
+        "vehicle_type_id": test_vehicle_type.id,
+        "booking_date": str(date.today()),
+        "start_time": "11:00",
+        "object_id": test_object.id,
+        "supplier_id": supplier.id,
+        "zone_id": zone_a.id,
+        "vehicle_plate": "ZONE-001",
+        "driver_full_name": "Zone Driver",
+        "driver_phone": "70000000000",
+        "time_slot_id": slot_zone_a.id,
+        "booking_type": "in",
+    }
+
+    response = test_client.post("/api/bookings/", json=booking_data)
+
+    assert response.status_code == 409
+    assert "не найдено доступных временных слотов" in response.json()["detail"].lower()

@@ -21,6 +21,8 @@ interface YmsObject {
   id: number
   name: string
   object_type: string
+  capacity_in?: number | null
+  capacity_out?: number | null
 }
 
 interface TransportType {
@@ -164,6 +166,13 @@ const BookingOut: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedObject, selectedTransportType])
 
+  useEffect(() => {
+    if (objects.length && selectedObject && selectedTransportType) {
+      handleSearch()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objects])
+
   
   const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
     if (!selectedObject || !selectedTransportType) {
@@ -176,10 +185,14 @@ const BookingOut: React.FC = () => {
     const from = format(currentRange.start, 'yyyy-MM-dd')
     const to = format(currentRange.end, 'yyyy-MM-dd')
     const supplierQuery = askonaSupplierId ? `&supplier_id=${askonaSupplierId}` : ''
+    const selectedObjectData = objects.find(o => o.id === selectedObject)
+    const objectCapacityRaw = selectedObjectData?.capacity_out
+    const objectCapacity = typeof objectCapacityRaw === 'number' && objectCapacityRaw > 0 ? objectCapacityRaw : null
 
     try {
-      const [slotsRes, quotaRes] = await Promise.all([
+      const [slotsRes, objectScopeSlotsRes, quotaRes] = await Promise.all([
         axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&transport_type_id=${selectedTransportType}${supplierQuery}&booking_type=out`),
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&booking_type=out`).catch(() => ({ data: [] as TimeSlot[] })),
         axios.get<QuotaAvailability[]>(`${API_BASE}/api/volume-quotas/availability`, {
           params: {
             from_date: from,
@@ -198,11 +211,19 @@ const BookingOut: React.FC = () => {
       setQuotaByDate(quotaMap)
 
       const data = slotsRes.data
+      const objectScopeData = objectScopeSlotsRes.data.length ? objectScopeSlotsRes.data : data
       const evts: EventItem[] = []
 
       for (let d = new Date(currentRange.start); d <= currentRange.end; d = new Date(d.getTime() + 86400000)) {
         const dow = d.getDay() === 0 ? 6 : d.getDay() - 1
         const daySlots = data.filter(s => s.day_of_week === dow)
+        const objectDaySlots = objectScopeData.filter(s => s.day_of_week === dow)
+        const objectOccupancyByTime = new Map<string, number>()
+
+        objectDaySlots.forEach(slot => {
+          const timeKey = `${slot.start_time}-${slot.end_time}`
+          objectOccupancyByTime.set(timeKey, (objectOccupancyByTime.get(timeKey) || 0) + slot.occupancy)
+        })
 
         if (viewMode === 'day') {
           daySlots.forEach(slot => {
@@ -215,17 +236,24 @@ const BookingOut: React.FC = () => {
 
             const title = `${slot.occupancy}/${slot.capacity}`
             const tooltip = formatBookingTooltip(slot.bookings)
+            const timeKey = `${slot.start_time}-${slot.end_time}`
+            const objectOccupancy = objectOccupancyByTime.get(timeKey) || 0
+            const objectRemaining = objectCapacity !== null ? objectCapacity - objectOccupancy : null
+            const objectCapacityInfo = objectCapacity !== null ? `${objectRemaining}/${objectCapacity}` : ''
+            const isObjectCapacityFull = objectRemaining !== null && objectRemaining <= 0
 
             const isStart = (slot.bookings || []).some(b => (b as any).is_start)
-            const displayTitle = title
+            const displayTitle = objectCapacityInfo ? `${title} | ${objectCapacityInfo}` : title
+            const resourceForEvent: TimeSlot = isObjectCapacityFull ? { ...slot, status: 'full' } : slot
+            const availableDocks = isObjectCapacityFull ? [] : slot.dock_id ? [slot.dock_id] : []
 
             evts.push({
               id: `slot-${slot.id}-${d.toDateString()}`,
               title: displayTitle,
               start,
               end,
-              resource: slot,
-              availableDocks: slot.dock_id ? [slot.dock_id] : [],
+              resource: resourceForEvent,
+              availableDocks,
               resourceId: slot.dock_id,
               tooltip,
               isStart,
@@ -251,6 +279,9 @@ const BookingOut: React.FC = () => {
             const totalCapacity = slots.reduce((sum, slot) => sum + slot.capacity, 0)
             const totalOccupancy = slots.reduce((sum, slot) => sum + slot.occupancy, 0)
             const combinedBookings = slots.flatMap(s => s.bookings || [])
+            const objectOccupancy = objectOccupancyByTime.get(timeKey) || 0
+            const objectRemaining = objectCapacity !== null ? objectCapacity - objectOccupancy : null
+            const isObjectCapacityFull = objectRemaining !== null && objectRemaining <= 0
             let status: 'free' | 'partial' | 'full' = 'free'
             if (totalOccupancy === 0) {
               status = 'free'
@@ -259,8 +290,10 @@ const BookingOut: React.FC = () => {
             } else {
               status = 'full'
             }
+            if (isObjectCapacityFull) status = 'full'
 
             const title = `${totalOccupancy}/${totalCapacity}`
+            const objectCapacityInfo = objectCapacity !== null ? `${objectRemaining}/${objectCapacity}` : ''
             const combinedResource: TimeSlot = {
               id: slots[0].id,
               day_of_week: slots[0].day_of_week,
@@ -272,9 +305,11 @@ const BookingOut: React.FC = () => {
               bookings: combinedBookings,
             }
 
-            const availableDocks = slots.filter(s => s.occupancy < s.capacity).map(s => s.dock_id).filter((id): id is number => typeof id === 'number')
+            const availableDocks = isObjectCapacityFull
+              ? []
+              : slots.filter(s => s.occupancy < s.capacity).map(s => s.dock_id).filter((id): id is number => typeof id === 'number')
             const isStart = combinedBookings.some(b => (b as any).is_start)
-            const displayTitle = title
+            const displayTitle = objectCapacityInfo ? `${title} | ${objectCapacityInfo}` : title
 
             evts.push({
               id: `combined-${timeKey}-${d.toDateString()}`,

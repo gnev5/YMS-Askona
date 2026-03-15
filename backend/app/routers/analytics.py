@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Date
 from datetime import date
@@ -15,6 +15,7 @@ def get_bookings_by_day(
     end_date: date,
     transport_type_id: int = None,
     supplier_id: int = None,
+    supplier_ids: list[int] | None = Query(default=None),
     object_id: int = None,
     dock_type: str = None,
     db: Session = Depends(get_db),
@@ -42,7 +43,9 @@ def get_bookings_by_day(
 
     if transport_type_id is not None:
         subquery = subquery.filter(models.Booking.transport_type_id == transport_type_id)
-    if supplier_id is not None:
+    if supplier_ids:
+        subquery = subquery.filter(models.Booking.supplier_id.in_(supplier_ids))
+    elif supplier_id is not None:
         subquery = subquery.filter(models.Booking.supplier_id == supplier_id)
     if object_id is not None:
         subquery = subquery.filter(models.Dock.object_id == object_id)
@@ -84,6 +87,7 @@ def get_bookings_by_zone(
     end_date: date,
     transport_type_id: int = None,
     supplier_id: int = None,
+    supplier_ids: list[int] | None = Query(default=None),
     object_id: int = None,
     dock_type: str = None,
     db: Session = Depends(get_db),
@@ -108,7 +112,9 @@ def get_bookings_by_zone(
 
     if transport_type_id is not None:
         subquery = subquery.filter(models.Booking.transport_type_id == transport_type_id)
-    if supplier_id is not None:
+    if supplier_ids:
+        subquery = subquery.filter(models.Booking.supplier_id.in_(supplier_ids))
+    elif supplier_id is not None:
         subquery = subquery.filter(models.Booking.supplier_id == supplier_id)
     if object_id is not None:
         subquery = subquery.filter(models.Dock.object_id == object_id)

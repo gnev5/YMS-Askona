@@ -28,19 +28,11 @@ interface ObjectItem {
 }
 
 const formatDate = (d: Date) => d.toISOString().slice(0, 10)
-const getCurrentWeekRange = () => {
-  const today = new Date()
-  const dayOfWeek = (today.getDay() + 6) % 7 // Monday = 0
-  const start = new Date(today)
-  start.setDate(today.getDate() - dayOfWeek)
-  const end = new Date(start)
-  end.setDate(start.getDate() + 6)
-  return { start: formatDate(start), end: formatDate(end) }
-}
 
 interface TimeSlotForm {
-  dock_id: number
-  slot_date: string
+  dock_ids: number[]
+  start_date: string
+  end_date: string
   start_time: string
   end_time: string
   capacity: number
@@ -48,7 +40,7 @@ interface TimeSlotForm {
 }
 
 const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
-  const weekRange = getCurrentWeekRange()
+  const todayDate = formatDate(new Date())
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([])
   const [docks, setDocks] = useState<Dock[]>([])
   const [objects, setObjects] = useState<ObjectItem[]>([])
@@ -58,8 +50,9 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [selectedSlots, setSelectedSlots] = useState<number[]>([])
   const [showForm, setShowForm] = useState(false)
   const [formData, setFormData] = useState<TimeSlotForm>({
-    dock_id: 0,
-    slot_date: '',
+    dock_ids: [],
+    start_date: '',
+    end_date: '',
     start_time: '',
     end_time: '',
     capacity: 1,
@@ -68,8 +61,8 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   
   // Фильтры
   const [filters, setFilters] = useState({
-    start_date: weekRange.start,
-    end_date: weekRange.end,
+    start_date: todayDate,
+    end_date: todayDate,
     dock_id: '',
     is_available: '',
     object_id: '',
@@ -85,8 +78,8 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     try {
       const { data } = await axios.get<Dock[]>(`${API_BASE}/api/docks/`)
       setDocks(data)
-      if (data.length > 0 && formData.dock_id === 0) {
-        setFormData(prev => ({ ...prev, dock_id: data[0].id }))
+      if (data.length > 0) {
+        setFormData(prev => (prev.dock_ids.length > 0 ? prev : { ...prev, dock_ids: [data[0].id] }))
       }
     } catch (e: any) {
       setError('Ошибка загрузки доков')
@@ -175,35 +168,49 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   }
 
   const handleCreateSlot = async () => {
+    if (formData.dock_ids.length === 0) {
+      setError('Выберите хотя бы один док')
+      return
+    }
+    if (!formData.start_date || !formData.end_date) {
+      setError('Укажите даты начала и окончания')
+      return
+    }
+    if (formData.start_date > formData.end_date) {
+      setError('Дата начала должна быть меньше или равна дате окончания')
+      return
+    }
+    if (!formData.start_time || !formData.end_time) {
+      setError('Укажите время начала и окончания')
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
-      const slotData = {
-        ...formData,
-        slot_date: formData.slot_date,
-        start_time: formData.start_time,
-        end_time: formData.end_time
-      }
-      
-      await axios.post(`${API_BASE}/api/time-slots/`, slotData, { headers })
-      setSuccess('Интервал создан успешно')
+      const { data } = await axios.post<{ created_count: number; skipped_existing_count: number }>(
+        `${API_BASE}/api/time-slots/bulk-create`,
+        formData,
+        { headers }
+      )
+      setSuccess(`Создано: ${data.created_count}, пропущено существующих: ${data.skipped_existing_count}`)
       setShowForm(false)
       setFormData({
-        dock_id: docks[0]?.id || 0,
-        slot_date: '',
+        dock_ids: docks[0] ? [docks[0].id] : [],
+        start_date: '',
+        end_date: '',
         start_time: '',
         end_time: '',
         capacity: 1,
-        is_available: true
+        is_available: true,
       })
       loadTimeSlots()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Ошибка создания интервала')
+      setError(e.response?.data?.detail || 'Ошибка создания интервалов')
     } finally {
       setLoading(false)
     }
   }
-
   const handleDeleteSlot = async (slotId: number) => {
     if (!confirm('Удалить этот интервал?')) {
       return
@@ -283,11 +290,15 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
           <h3 style={{ margin: '0 0 16px 0' }}>Добавить новый интервал</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             <div>
-              <label>Док:</label>
-              <select 
-                value={formData.dock_id} 
-                onChange={e => setFormData(prev => ({ ...prev, dock_id: Number(e.target.value) }))}
-                style={{ width: '100%', padding: 8, marginTop: 4 }}
+              <label>Доки:</label>
+              <select
+                multiple
+                value={formData.dock_ids.map(String)}
+                onChange={e => {
+                  const selectedIds = Array.from(e.target.selectedOptions).map(opt => Number(opt.value))
+                  setFormData(prev => ({ ...prev, dock_ids: selectedIds }))
+                }}
+                style={{ width: '100%', padding: 8, marginTop: 4, minHeight: 96 }}
               >
                 {docks.map(dock => (
                   <option key={dock.id} value={dock.id}>{dock.name}</option>
@@ -295,11 +306,20 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               </select>
             </div>
             <div>
-              <label>Дата:</label>
-              <input 
-                type="date" 
-                value={formData.slot_date} 
-                onChange={e => setFormData(prev => ({ ...prev, slot_date: e.target.value }))}
+              <label>Дата с:</label>
+              <input
+                type="date"
+                value={formData.start_date}
+                onChange={e => setFormData(prev => ({ ...prev, start_date: e.target.value }))}
+                style={{ width: '100%', padding: 8, marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <label>Дата по:</label>
+              <input
+                type="date"
+                value={formData.end_date}
+                onChange={e => setFormData(prev => ({ ...prev, end_date: e.target.value }))}
                 style={{ width: '100%', padding: 8, marginTop: 4 }}
               />
             </div>
@@ -367,7 +387,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               style={{ width: '100%', padding: 8, marginTop: 4 }}
             />
           </div>
-          <div>
+            <div>
             <label>Дата по:</label>
             <input 
               type="date" 
@@ -376,7 +396,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               style={{ width: '100%', padding: 8, marginTop: 4 }}
             />
           </div>
-          <div>
+            <div>
             <label>Время с:</label>
             <input
               type="time"
@@ -386,7 +406,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               style={{ width: '100%', padding: 8, marginTop: 4 }}
             />
           </div>
-          <div>
+            <div>
             <label>Время по:</label>
             <input
               type="time"
@@ -396,7 +416,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               style={{ width: '100%', padding: 8, marginTop: 4 }}
             />
           </div>
-          <div>
+            <div>
             <label>Док:</label>
             <select 
               value={filters.dock_id} 
@@ -409,7 +429,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               ))}
             </select>
           </div>
-          <div>
+            <div>
             <label>Объект:</label>
             <select 
               value={filters.object_id}
@@ -422,7 +442,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               ))}
             </select>
           </div>
-          <div>
+            <div>
             <label>Тип дока:</label>
             <select 
               value={filters.dock_type}
@@ -435,7 +455,7 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               <option value="universal">Универсальный</option>
             </select>
           </div>
-          <div>
+            <div>
             <label>Доступность:</label>
             <select 
               value={filters.is_available} 
@@ -565,3 +585,5 @@ const AdminTimeSlots: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 }
 
 export default AdminTimeSlots
+
+

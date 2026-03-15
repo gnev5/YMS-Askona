@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 
 SECRET_KEY = os.getenv("JWT_SECRET", "dev-secret-change")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "180"))
 
 # Use bcrypt for new hashes; keep others to verify legacy hashes
 pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256", "bcrypt_sha256"], deprecated="auto")
@@ -31,3 +31,4 @@ def decode_token(token: str) -> Optional[dict]:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
+

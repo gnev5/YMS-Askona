@@ -39,29 +39,26 @@ def get_my_suppliers(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    if current_user.role == UserRole.admin:
-        return (
-            db.query(Supplier)
-            .options(
-                joinedload(Supplier.zone),
-                joinedload(Supplier.vehicle_types),
-                joinedload(Supplier.transport_types),
-            )
-            .all()
-        )
-
-    user_suppliers = db.query(UserSupplier).filter(UserSupplier.user_id == current_user.id).all()
-    supplier_ids = [us.supplier_id for us in user_suppliers]
-    return (
+    base_query = (
         db.query(Supplier)
         .options(
             joinedload(Supplier.zone),
             joinedload(Supplier.vehicle_types),
             joinedload(Supplier.transport_types),
         )
-        .filter(Supplier.id.in_(supplier_ids))
-        .all()
     )
+
+    if current_user.role == UserRole.admin:
+        return base_query.all()
+
+    user_suppliers = db.query(UserSupplier).filter(UserSupplier.user_id == current_user.id).all()
+    supplier_ids = [us.supplier_id for us in user_suppliers]
+
+    # No explicit assignments -> user may work with all suppliers.
+    if not supplier_ids:
+        return base_query.all()
+
+    return base_query.filter(Supplier.id.in_(supplier_ids)).all()
 
 
 @router.post("/", response_model=SupplierSchema)

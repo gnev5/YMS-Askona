@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
+import { addDays, format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { Bar, Pie } from '../components/ChartComponents';
 
@@ -26,6 +26,70 @@ if (typeof window !== 'undefined' && window.Chart) {
 
 // Используем полный URL бэкенда
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+const CYRILLIC_TO_LATIN_MAP: Record<string, string> = {
+  '\u0430': 'a',
+  '\u0431': 'b',
+  '\u0432': 'v',
+  '\u0433': 'g',
+  '\u0434': 'd',
+  '\u0435': 'e',
+  '\u0451': 'yo',
+  '\u0436': 'zh',
+  '\u0437': 'z',
+  '\u0438': 'i',
+  '\u0439': 'y',
+  '\u043a': 'k',
+  '\u043b': 'l',
+  '\u043c': 'm',
+  '\u043d': 'n',
+  '\u043e': 'o',
+  '\u043f': 'p',
+  '\u0440': 'r',
+  '\u0441': 's',
+  '\u0442': 't',
+  '\u0443': 'u',
+  '\u0444': 'f',
+  '\u0445': 'kh',
+  '\u0446': 'ts',
+  '\u0447': 'ch',
+  '\u0448': 'sh',
+  '\u0449': 'sch',
+  '\u044a': '',
+  '\u044b': 'y',
+  '\u044c': '',
+  '\u044d': 'e',
+  '\u044e': 'yu',
+  '\u044f': 'ya',
+};
+
+const normalizeSearchValue = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const transliterateRuToLatin = (value: string) =>
+  value
+    .split('')
+    .map((char) => CYRILLIC_TO_LATIN_MAP[char] ?? char)
+    .join('');
+
+const supplierNameCollator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
+
+const serializeParams = (params: Record<string, unknown>) => {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => searchParams.append(key, String(item)));
+      return;
+    }
+    searchParams.append(key, String(value));
+  });
+  return searchParams.toString();
+};
 
 interface AnalyticsProps {
   onBack: () => void;
@@ -63,10 +127,10 @@ interface ObjectItem {
 
 const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   const [startDate, setStartDate] = useState<string>(
-    format(startOfMonth(new Date()), 'yyyy-MM-dd')
+    format(new Date(), 'yyyy-MM-dd')
   );
   const [endDate, setEndDate] = useState<string>(
-    format(endOfMonth(new Date()), 'yyyy-MM-dd')
+    format(addDays(new Date(), 5), 'yyyy-MM-dd')
   );
   const [bookingsByDay, setBookingsByDay] = useState<BookingsByDay[]>([]);
   const [bookingsByZone, setBookingsByZone] = useState<BookingsByZone[]>([]);
@@ -78,9 +142,12 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   const [transportTypes, setTransportTypes] = useState<TransportType[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedTransportTypeId, setSelectedTransportTypeId] = useState<string>('');
-  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [selectedSupplierIds, setSelectedSupplierIds] = useState<number[]>([]);
+  const [supplierSearch, setSupplierSearch] = useState<string>('');
+  const [supplierDropdownOpen, setSupplierDropdownOpen] = useState<boolean>(false);
   const [selectedObjectId, setSelectedObjectId] = useState<string>('');
   const [selectedDockType, setSelectedDockType] = useState<string>('');
+  const supplierFieldRef = useRef<HTMLDivElement | null>(null);
 
   // Загрузка справочников при монтировании компонента
   useEffect(() => {
@@ -92,7 +159,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   // Загрузка данных при изменении периода или фильтров
   useEffect(() => {
     fetchData();
-  }, [startDate, endDate, selectedTransportTypeId, selectedSupplierId, selectedObjectId, selectedDockType]);
+  }, [startDate, endDate, selectedTransportTypeId, selectedSupplierIds, selectedObjectId, selectedDockType]);
 
   const loadObjects = async () => {
     try {
@@ -147,6 +214,74 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
     }
   };
 
+  const sortedSuppliers = useMemo(
+    () => [...suppliers].sort((a, b) => supplierNameCollator.compare(a.name || '', b.name || '')),
+    [suppliers],
+  );
+
+  const selectedSuppliers = useMemo(
+    () => sortedSuppliers.filter((supplier) => selectedSupplierIds.includes(supplier.id)),
+    [selectedSupplierIds, sortedSuppliers],
+  );
+
+  const filteredSuppliers = useMemo(() => {
+    const query = normalizeSearchValue(supplierSearch);
+    const availableSuppliers = sortedSuppliers.filter((supplier) => !selectedSupplierIds.includes(supplier.id));
+    if (!query) return availableSuppliers;
+
+    const transliteratedQuery = transliterateRuToLatin(query);
+    return availableSuppliers.filter((supplier) => {
+      const normalizedName = normalizeSearchValue(supplier.name || '');
+      const transliteratedName = transliterateRuToLatin(normalizedName);
+      return (
+        normalizedName.includes(query) ||
+        normalizedName.includes(transliteratedQuery) ||
+        transliteratedName.includes(query) ||
+        transliteratedName.includes(transliteratedQuery)
+      );
+    });
+  }, [selectedSupplierIds, sortedSuppliers, supplierSearch]);
+
+  useEffect(() => {
+    const onDocumentMouseDown = (event: MouseEvent) => {
+      if (!supplierFieldRef.current) return;
+      if (!supplierFieldRef.current.contains(event.target as Node)) {
+        setSupplierDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', onDocumentMouseDown);
+    return () => document.removeEventListener('mousedown', onDocumentMouseDown);
+  }, []);
+
+  const handleSupplierSelect = (supplier: Supplier) => {
+    setSelectedSupplierIds((prev) => {
+      if (prev.includes(supplier.id)) return prev;
+      return [...prev, supplier.id];
+    });
+    setSupplierSearch('');
+    setSupplierDropdownOpen(true);
+  };
+
+  const handleRemoveSupplier = (supplierId: number) => {
+    setSelectedSupplierIds((prev) => prev.filter((id) => id !== supplierId));
+  };
+
+  const handleSupplierInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (filteredSuppliers.length > 0) handleSupplierSelect(filteredSuppliers[0]);
+      return;
+    }
+    if (event.key === 'Escape') {
+      setSupplierDropdownOpen(false);
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      setSupplierDropdownOpen(true);
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     setError(null);
@@ -169,8 +304,8 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
         params.transport_type_id = selectedTransportTypeId;
       }
       
-      if (selectedSupplierId) {
-        params.supplier_id = selectedSupplierId;
+      if (selectedSupplierIds.length > 0) {
+        params.supplier_ids = selectedSupplierIds;
       }
       if (selectedObjectId) {
         params.object_id = selectedObjectId;
@@ -182,14 +317,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
       // Загрузка данных по дням
       const bookingsByDayResponse = await axios.get(
         `${API_BASE}/api/analytics/bookings-by-day`,
-        { headers, params }
+        { headers, params, paramsSerializer: serializeParams }
       );
       setBookingsByDay(bookingsByDayResponse.data);
 
       // Загрузка данных по зонам
       const bookingsByZoneResponse = await axios.get(
         `${API_BASE}/api/analytics/bookings-by-zone`,
-        { headers, params }
+        { headers, params, paramsSerializer: serializeParams }
       );
       setBookingsByZone(bookingsByZoneResponse.data);
     } catch (err: any) {
@@ -345,19 +480,79 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
             </select>
           </div>
           
-          <div className="filter-item">
+                    <div className="filter-item supplier-filter" ref={supplierFieldRef}>
             <label>Поставщик: </label>
-            <select
-              value={selectedSupplierId}
-              onChange={(e) => setSelectedSupplierId(e.target.value)}
-            >
-              <option value="">Все поставщики</option>
-              {suppliers.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {supplier.name}
-                </option>
-              ))}
-            </select>
+            <div className="supplier-filter-control">
+              <div className="supplier-input-row">
+                <input
+                  type="text"
+                  value={supplierSearch}
+                  onFocus={() => setSupplierDropdownOpen(true)}
+                  onChange={(e) => {
+                    setSupplierSearch(e.target.value);
+                    setSupplierDropdownOpen(true);
+                  }}
+                  onKeyDown={handleSupplierInputKeyDown}
+                  placeholder={selectedSupplierIds.length > 0 ? 'Добавить поставщика' : 'Начните вводить поставщика'}
+                  autoComplete="off"
+                />
+                {selectedSupplierIds.length > 0 && (
+                  <button
+                    type="button"
+                    className="supplier-clear-btn"
+                    onClick={() => {
+                      setSelectedSupplierIds([]);
+                      setSupplierSearch('');
+                      setSupplierDropdownOpen(false);
+                    }}
+                  >
+                    Очистить
+                  </button>
+                )}
+              </div>
+
+              {supplierDropdownOpen && (
+                <div className="supplier-dropdown">
+                  {filteredSuppliers.length === 0 ? (
+                    <div className="supplier-dropdown-empty">Нет совпадений</div>
+                  ) : (
+                    filteredSuppliers.map((supplier) => (
+                      <div
+                        key={supplier.id}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          handleSupplierSelect(supplier);
+                        }}
+                        className="supplier-dropdown-item"
+                      >
+                        {supplier.name}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              <div className="supplier-hint">
+                {selectedSupplierIds.length === 0
+                  ? 'Выбраны все поставщики'
+                  : `Выбрано: ${selectedSupplierIds.length}`}
+              </div>
+
+              {selectedSuppliers.length > 0 && (
+                <div className="supplier-chips">
+                  {selectedSuppliers.map((supplier) => (
+                    <button
+                      key={supplier.id}
+                      type="button"
+                      className="supplier-chip"
+                      onClick={() => handleRemoveSupplier(supplier.id)}
+                    >
+                      {supplier.name} x
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -473,6 +668,78 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           border-radius: 4px;
           border: 1px solid #ccc;
         }
+        .filter-item input {
+          padding: 6px 10px;
+          border-radius: 4px;
+          border: 1px solid #ccc;
+        }
+        .supplier-filter {
+          align-items: flex-start;
+        }
+        .supplier-filter-control {
+          min-width: 320px;
+          position: relative;
+        }
+        .supplier-input-row {
+          display: flex;
+          gap: 8px;
+        }
+        .supplier-input-row input {
+          width: 100%;
+        }
+        .supplier-clear-btn {
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          background: #fff;
+          padding: 6px 10px;
+          cursor: pointer;
+        }
+        .supplier-dropdown {
+          position: absolute;
+          top: calc(100% + 4px);
+          left: 0;
+          right: 0;
+          max-height: 220px;
+          overflow-y: auto;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          background-color: #fff;
+          box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
+          z-index: 10;
+        }
+        .supplier-dropdown-item {
+          padding: 10px 12px;
+          cursor: pointer;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        .supplier-dropdown-item:hover {
+          background: #f8fafc;
+        }
+        .supplier-dropdown-empty {
+          padding: 10px;
+          color: #6b7280;
+          font-size: 14px;
+        }
+        .supplier-hint {
+          margin-top: 8px;
+          color: #64748b;
+          font-size: 12px;
+        }
+        .supplier-chips {
+          margin-top: 8px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .supplier-chip {
+          border: 1px solid #bfdbfe;
+          background: #eff6ff;
+          color: #1e3a8a;
+          border-radius: 999px;
+          padding: 4px 10px;
+          font-size: 13px;
+          cursor: pointer;
+        }
         .analytics-container {
           display: flex;
           flex-direction: column;
@@ -518,3 +785,4 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
 };
 
 export default Analytics;
+

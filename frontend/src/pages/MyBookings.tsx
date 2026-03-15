@@ -92,6 +92,8 @@ type Filters = {
 
   date_to: string
 
+  only_owner: boolean
+
 }
 
 
@@ -142,9 +144,25 @@ const defaultFilters = (): Filters => {
 
     date_to: toYmd(inThreeDays),
 
+    only_owner: false,
+
   }
 
 }
+
+const clearedFilters = (): Filters => ({
+  supplier: '',
+  zone: '',
+  transport_type: '',
+  vehicle_plate: '',
+  driver_name: '',
+  transport_sheet: '',
+  user_email: '',
+  objects: [],
+  date_from: '',
+  date_to: '',
+  only_owner: false,
+})
 
 
 
@@ -359,6 +377,12 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
         (b.user_full_name || '').toLowerCase().includes(filters.user_email.toLowerCase())
 
       )
+
+    }
+
+    if (filters.only_owner) {
+
+      filtered = filtered.filter(b => Boolean(b.is_owner))
 
     }
 
@@ -730,11 +754,20 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
         </div>
 
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={filters.only_owner}
+              onChange={e => setFilters(prev => ({ ...prev, only_owner: e.target.checked }))}
+            />
+            Только мои (я владелец)
+          </label>
 
           <button 
-
-            onClick={() => setFilters(defaultFilters())}
+            type="button"
+            onClick={() => setFilters(clearedFilters())}
 
             style={{ 
 

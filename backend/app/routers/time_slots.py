@@ -1,5 +1,4 @@
 from datetime import date, time, datetime, timedelta
-from datetime import date, time, datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -449,6 +448,75 @@ def bulk_delete_time_slots(
     return {
         "message": f"Successfully deleted {deleted_count} time slots",
         "deleted_count": deleted_count
+    }
+
+
+@router.post("/bulk-create")
+def bulk_create_time_slots(
+    payload: schemas.TimeSlotBulkCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Массово создать одинаковые интервалы для нескольких доков и диапазона дат."""
+    dock_ids = list(dict.fromkeys(payload.dock_ids))
+    if not dock_ids:
+        raise HTTPException(status_code=400, detail="At least one dock_id is required")
+    if payload.start_date > payload.end_date:
+        raise HTTPException(status_code=400, detail="start_date must be before or equal to end_date")
+    if payload.start_time >= payload.end_time:
+        raise HTTPException(status_code=400, detail="start_time must be before end_time")
+    if payload.capacity < 1:
+        raise HTTPException(status_code=400, detail="capacity must be >= 1")
+
+    existing_dock_rows = db.query(models.Dock.id).filter(models.Dock.id.in_(dock_ids)).all()
+    existing_dock_ids = {row[0] for row in existing_dock_rows}
+    missing_docks = [dock_id for dock_id in dock_ids if dock_id not in existing_dock_ids]
+    if missing_docks:
+        raise HTTPException(status_code=404, detail=f"Docks not found: {missing_docks}")
+
+    existing_rows = db.query(
+        models.TimeSlot.dock_id,
+        models.TimeSlot.slot_date,
+    ).filter(
+        models.TimeSlot.dock_id.in_(dock_ids),
+        models.TimeSlot.slot_date >= payload.start_date,
+        models.TimeSlot.slot_date <= payload.end_date,
+        models.TimeSlot.start_time == payload.start_time,
+        models.TimeSlot.end_time == payload.end_time,
+    ).all()
+    existing_set = {(row[0], row[1]) for row in existing_rows}
+
+    created_count = 0
+    skipped_existing_count = 0
+    current_date = payload.start_date
+    while current_date <= payload.end_date:
+        for dock_id in dock_ids:
+            key = (dock_id, current_date)
+            if key in existing_set:
+                skipped_existing_count += 1
+                continue
+
+            db.add(
+                models.TimeSlot(
+                    dock_id=dock_id,
+                    slot_date=current_date,
+                    start_time=payload.start_time,
+                    end_time=payload.end_time,
+                    capacity=payload.capacity,
+                    is_available=payload.is_available,
+                )
+            )
+            created_count += 1
+        current_date += timedelta(days=1)
+
+    db.commit()
+
+    total_requested = ((payload.end_date - payload.start_date).days + 1) * len(dock_ids)
+    return {
+        "message": "Bulk create completed",
+        "total_requested": total_requested,
+        "created_count": created_count,
+        "skipped_existing_count": skipped_existing_count,
     }
 
 

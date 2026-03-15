@@ -16,6 +16,14 @@ from io import BytesIO
 
 router = APIRouter()
 
+def _dock_matches_supplier_zone(dock: models.Dock, supplier_zone_id: int | None) -> bool:
+    if supplier_zone_id is None:
+        return True
+    if not dock.available_zones:
+        return True
+    return any(zone.id == supplier_zone_id for zone in dock.available_zones)
+
+
 def _serialize_booking(db: Session, booking: models.Booking, include_user: bool = False):
     slots = db.query(models.TimeSlot, models.Dock).join(
         models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
@@ -82,11 +90,20 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
     if not obj:
         raise HTTPException(status_code=404, detail="Object not found")
 
+    supplier_zone_id: int | None = None
     if booking.supplier_id:
         supplier = db.query(models.Supplier).options(
-            joinedload(models.Supplier.vehicle_types)
+            joinedload(models.Supplier.vehicle_types),
+            joinedload(models.Supplier.zone),
         ).filter(models.Supplier.id == booking.supplier_id).first()
-        if supplier and supplier.vehicle_types:
+        if not supplier:
+            raise HTTPException(status_code=404, detail="Supplier not found")
+        supplier_zone_id = supplier.zone_id
+
+        if booking.zone_id is not None and booking.zone_id != supplier_zone_id:
+            raise HTTPException(status_code=400, detail="Booking zone must match supplier zone")
+
+        if supplier.vehicle_types:
             allowed_ids = {vt.id for vt in supplier.vehicle_types}
             if booking.vehicle_type_id not in allowed_ids:
                 raise HTTPException(status_code=400, detail="Selected vehicle type is not allowed for this supplier")
@@ -174,11 +191,18 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                 if is_continuous:
                     logging.info("Chain is continuous.")
                     # Проверим лимиты пропускной способности объекта
-                    dock = db.query(models.Dock).filter(models.Dock.id == initial_slot.dock_id).first()
+                    dock = db.query(models.Dock).options(
+                        joinedload(models.Dock.available_zones)
+                    ).filter(models.Dock.id == initial_slot.dock_id).first()
                     obj_for_check = dock.object if dock else None
 
                     capacity_block = False
                     if dock and obj_for_check:
+                        if not _dock_matches_supplier_zone(dock, supplier_zone_id):
+                            logging.info(
+                                f"Initial slot dock {dock.id} is not allowed for supplier zone {supplier_zone_id}."
+                            )
+                            capacity_block = True
                         logging.info(f"Checking object capacity for object_id: {obj_for_check.id}")
                         limits_to_check = []
                         if dock.dock_type == models.DockType.entrance:
@@ -272,7 +296,12 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         slots_by_dock[slot.dock_id].append(slot)
 
     dock_ids = list(slots_by_dock.keys())
-    docks_from_db = db.query(models.Dock).options(joinedload(models.Dock.available_transport_types)).filter(models.Dock.id.in_(dock_ids)).all() if dock_ids else []
+    docks_from_db = (
+        db.query(models.Dock).options(
+            joinedload(models.Dock.available_transport_types),
+            joinedload(models.Dock.available_zones),
+        ).filter(models.Dock.id.in_(dock_ids)).all() if dock_ids else []
+    )
     dock_map = {d.id: d for d in docks_from_db}
 
     # Сортируем доки по приоритету в зависимости от типа бронирования
@@ -314,6 +343,9 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
             continue
         if booking_direction == models.BookingDirection.outbound and dock and dock.dock_type == models.DockType.entrance:
             logging.info(f"Skipping dock {dock_id}: type is 'entrance' for an 'out' booking.")
+            continue
+        if dock and not _dock_matches_supplier_zone(dock, supplier_zone_id):
+            logging.info(f"Skipping dock {dock_id}: not allowed for supplier zone {supplier_zone_id}.")
             continue
         
         # Проверяем, разрешен ли тип перевозки для этого дока
@@ -400,7 +432,7 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
         logging.error("--- No suitable slots found. Raising 409 Conflict. ---")
         raise HTTPException(
             status_code=409, 
-            detail="No available time slots found for the requested period"
+            detail="На запрошенный период не найдено доступных временных слотов"
         )
 
     quota, total_quota_volume = get_quota_for_date(

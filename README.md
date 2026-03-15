@@ -37,3 +37,4 @@ The backend uses these env vars (inlined in compose):
 
 ### Notes
 - Tables are auto-created on startup for development. Consider Alembic for migrations.
+
