@@ -107,6 +107,15 @@ interface BookingsByZone {
   cubes_sum: number;
 }
 
+interface BookingsByHour {
+  hour: number;
+  label: string;
+  start_count: number;
+  start_cubes: number;
+  occupied_count: number;
+  occupied_cubes: number;
+}
+
 interface TransportType {
   id: number;
   name: string;
@@ -134,6 +143,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   );
   const [bookingsByDay, setBookingsByDay] = useState<BookingsByDay[]>([]);
   const [bookingsByZone, setBookingsByZone] = useState<BookingsByZone[]>([]);
+  const [bookingsByHour, setBookingsByHour] = useState<BookingsByHour[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -314,19 +324,23 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
         params.dock_type = selectedDockType;
       }
       
-      // Загрузка данных по дням
-      const bookingsByDayResponse = await axios.get(
-        `${API_BASE}/api/analytics/bookings-by-day`,
-        { headers, params, paramsSerializer: serializeParams }
-      );
+      const [bookingsByDayResponse, bookingsByZoneResponse, bookingsByHourResponse] = await Promise.all([
+        axios.get(
+          `${API_BASE}/api/analytics/bookings-by-day`,
+          { headers, params, paramsSerializer: serializeParams }
+        ),
+        axios.get(
+          `${API_BASE}/api/analytics/bookings-by-zone`,
+          { headers, params, paramsSerializer: serializeParams }
+        ),
+        axios.get(
+          `${API_BASE}/api/analytics/bookings-by-hour`,
+          { headers, params, paramsSerializer: serializeParams }
+        ),
+      ]);
       setBookingsByDay(bookingsByDayResponse.data);
-
-      // Загрузка данных по зонам
-      const bookingsByZoneResponse = await axios.get(
-        `${API_BASE}/api/analytics/bookings-by-zone`,
-        { headers, params, paramsSerializer: serializeParams }
-      );
       setBookingsByZone(bookingsByZoneResponse.data);
+      setBookingsByHour(bookingsByHourResponse.data);
     } catch (err: any) {
       console.error('Error fetching analytics data:', err);
       setError(err?.response?.data?.detail || 'Ошибка загрузки данных');
@@ -414,6 +428,58 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           'rgba(153, 102, 255, 1)',
           'rgba(255, 99, 132, 1)',
         ],
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const bookingsByStartHourChartData = {
+    labels: bookingsByHour.map((item) => item.label),
+    datasets: [
+      {
+        label: 'Количество записей по часу начала',
+        data: bookingsByHour.map((item) => item.start_count),
+        backgroundColor: 'rgba(59, 130, 246, 0.6)',
+        borderColor: 'rgba(59, 130, 246, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const cubesByStartHourChartData = {
+    labels: bookingsByHour.map((item) => item.label),
+    datasets: [
+      {
+        label: 'Кубы по часу начала',
+        data: bookingsByHour.map((item) => item.start_cubes),
+        backgroundColor: 'rgba(16, 185, 129, 0.6)',
+        borderColor: 'rgba(16, 185, 129, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const bookingsByOccupiedHoursChartData = {
+    labels: bookingsByHour.map((item) => item.label),
+    datasets: [
+      {
+        label: 'Количество записей по занятым часам',
+        data: bookingsByHour.map((item) => item.occupied_count),
+        backgroundColor: 'rgba(245, 158, 11, 0.6)',
+        borderColor: 'rgba(245, 158, 11, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const cubesByOccupiedHoursChartData = {
+    labels: bookingsByHour.map((item) => item.label),
+    datasets: [
+      {
+        label: 'Кубы по занятым часам (равномерно)',
+        data: bookingsByHour.map((item) => item.occupied_cubes),
+        backgroundColor: 'rgba(139, 92, 246, 0.6)',
+        borderColor: 'rgba(139, 92, 246, 1)',
         borderWidth: 1,
       },
     ],
@@ -604,6 +670,46 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
             <h2>Количество кубов по дням</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={cubesChartData} options={chartOptions} />
+            ) : (
+              <div>Загрузка графика...</div>
+            )}
+          </div>
+          </div>
+
+          <div className="chart-row">
+            <div className="chart-container">
+            <h2>Количество записей по часу начала</h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              <Bar data={bookingsByStartHourChartData} options={chartOptions} />
+            ) : (
+              <div>Загрузка графика...</div>
+            )}
+          </div>
+
+          <div className="chart-container">
+            <h2>Количество кубов по часу начала</h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              <Bar data={cubesByStartHourChartData} options={chartOptions} />
+            ) : (
+              <div>Загрузка графика...</div>
+            )}
+          </div>
+          </div>
+
+          <div className="chart-row">
+            <div className="chart-container">
+            <h2>Количество записей по занятым часам</h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              <Bar data={bookingsByOccupiedHoursChartData} options={chartOptions} />
+            ) : (
+              <div>Загрузка графика...</div>
+            )}
+          </div>
+
+          <div className="chart-container">
+            <h2>Количество кубов по занятым часам</h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              <Bar data={cubesByOccupiedHoursChartData} options={chartOptions} />
             ) : (
               <div>Загрузка графика...</div>
             )}

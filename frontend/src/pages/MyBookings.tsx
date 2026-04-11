@@ -177,6 +177,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
   const [loading, setLoading] = useState(false)
 
   const [savingTransportSheet, setSavingTransportSheet] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const [error, setError] = useState<string | null>(null)
 
@@ -488,6 +489,59 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
   const formatTime = (timeStr: string) => timeStr.slice(0, 5)
 
+  const getFilenameFromDisposition = (contentDisposition?: string) => {
+    if (!contentDisposition) return null
+    const utfMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+    if (utfMatch?.[1]) return decodeURIComponent(utfMatch[1])
+    const simpleMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i)
+    if (simpleMatch?.[1]) return simpleMatch[1]
+    return null
+  }
+
+  const exportToExcel = async () => {
+    if (filteredBookings.length === 0) {
+      setError('Нет данных для выгрузки по текущим фильтрам')
+      return
+    }
+
+    setExporting(true)
+    setError(null)
+    setSuccess(null)
+
+    try {
+      const bookingIds = filteredBookings.map(b => b.id)
+      const response = await axios.post(
+        `${API_BASE}/api/bookings/export/xlsx`,
+        bookingIds,
+        {
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          responseType: 'blob',
+        }
+      )
+
+      const blob = new Blob(
+        [response.data],
+        { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+      )
+      const filename = getFilenameFromDisposition(response.headers['content-disposition']) || `my_bookings_export_${Date.now()}.xlsx`
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+
+      setSuccess('Выгрузка выполнена')
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail || e?.message || 'Не удалось выгрузить файл'
+      setError(typeof detail === 'string' ? detail : 'Не удалось выгрузить файл')
+    } finally {
+      setExporting(false)
+    }
+  }
+
 
 
   return (
@@ -789,6 +843,23 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
             Сбросить фильтры
 
+          </button>
+
+          <button
+            type="button"
+            onClick={exportToExcel}
+            disabled={exporting}
+            style={{
+              backgroundColor: '#059669',
+              color: 'white',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: 4,
+              cursor: exporting ? 'not-allowed' : 'pointer',
+              opacity: exporting ? 0.8 : 1
+            }}
+          >
+            {exporting ? 'Exporting...' : 'Export Excel'}
           </button>
 
         </div>

@@ -416,8 +416,17 @@ def create_prr_limit(prr_limit: schemas.PrrLimitCreate, db: Session = Depends(ge
 
 
 @router.get("/", response_model=List[schemas.PrrLimit])
-def read_prr_limits(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    prr_limits = db.query(models.PrrLimit).offset(skip).limit(limit).all()
+def read_prr_limits(
+    skip: int = 0,
+    limit: int = 100,
+    supplier_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.PrrLimit)
+    if supplier_id is not None:
+        query = query.filter(models.PrrLimit.supplier_id == supplier_id)
+
+    prr_limits = query.offset(skip).limit(limit).all()
     return prr_limits
 
 

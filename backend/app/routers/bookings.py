@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
@@ -560,6 +560,89 @@ def get_my_bookings(db: Session = Depends(get_db), current_user: models.User = D
             result.append(serialized)
     
     return result
+
+
+@router.post("/export/xlsx")
+def export_bookings_xlsx(
+    booking_ids: List[int] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Экспорт выбранных бронирований в XLSX."""
+    if not booking_ids:
+        raise HTTPException(status_code=400, detail="No booking IDs provided")
+
+    unique_ids = list(dict.fromkeys(booking_ids))
+
+    bookings = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.id.in_(unique_ids),
+            models.Booking.status == "confirmed",
+        )
+        .all()
+    )
+    booking_by_id = {b.id: b for b in bookings}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "bookings"
+    ws.append([
+        "date",
+        "time_range",
+        "dock_name",
+        "object_name",
+        "vehicle_type",
+        "supplier_name",
+        "zone_name",
+        "transport_type",
+        "cubes",
+        "transport_sheet",
+        "status",
+        "user",
+        "booking_id",
+    ])
+
+    for booking_id in unique_ids:
+        booking = booking_by_id.get(booking_id)
+        if not booking:
+            continue
+
+        serialized = _serialize_booking(db, booking, include_user=True)
+        if not serialized:
+            continue
+
+        start_time = (serialized.get("start_time") or "")[:5]
+        end_time = (serialized.get("end_time") or "")[:5]
+        time_range = f"{start_time} - {end_time}" if start_time or end_time else ""
+        user_label = serialized.get("user_full_name") or serialized.get("user_email") or serialized.get("user_login") or ""
+
+        ws.append([
+            serialized.get("booking_date") or "",
+            time_range,
+            serialized.get("dock_name") or "",
+            serialized.get("object_name") or "",
+            serialized.get("vehicle_type_name") or "",
+            serialized.get("supplier_name") or "",
+            serialized.get("zone_name") or "",
+            serialized.get("transport_type_name") or "",
+            serialized.get("cubes") if serialized.get("cubes") is not None else "",
+            serialized.get("transport_sheet") or "",
+            serialized.get("status") or "",
+            user_label,
+            serialized.get("id") or "",
+        ])
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"my_bookings_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 @router.put("/{booking_id}/transport-sheet", response_model=schemas.BookingWithDetails)
 def update_transport_sheet(

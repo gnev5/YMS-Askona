@@ -51,7 +51,7 @@ interface BookingModalProps {
   isOpen: boolean
   onClose: () => void
   selectedSlot: { start: Date; end: Date; slotId: number; availableDocks?: number[] } | null
-  onBookingSuccess: () => void
+  onBookingSuccess: () => void | Promise<void>
   selectedObject: number | null
   prefillSupplierId?: number | null
   prefillTransportTypeId?: number | null
@@ -270,7 +270,7 @@ const BookingModal: React.FC<BookingModalProps> = ({
       await axios.post(`${API_BASE}/api/bookings/`, bookingData, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      onBookingSuccess()
+      await onBookingSuccess()
       onClose()
     } catch (e: any) {
       let errorMsg = 'Не получилось сохранить бронь'

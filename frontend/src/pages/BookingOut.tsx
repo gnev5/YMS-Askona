@@ -95,6 +95,7 @@ const BookingOut: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [currentView, setCurrentView] = useState<View>('week')
   const viewRef = useRef<View>('week')
+  const latestSearchRequestRef = useRef(0)
   const [range, setRange] = useState<{ start: Date; end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) })
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null)
@@ -162,28 +163,37 @@ const BookingOut: React.FC = () => {
   useEffect(() => {
     if (selectedObject) localStorage.setItem('lastSelectedObject_BookingOut', String(selectedObject))
     if (selectedTransportType) localStorage.setItem('lastSelectedTransportType_BookingOut', String(selectedTransportType))
-    if (selectedObject && selectedTransportType) handleSearch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedObject, selectedTransportType])
 
   useEffect(() => {
     if (objects.length && selectedObject && selectedTransportType) {
-      handleSearch()
+      handleSearch(range, currentView)
+      return
     }
+    latestSearchRequestRef.current += 1
+    setEvents([])
+    setQuotaByDate({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects])
+  }, [selectedObject, selectedTransportType, askonaSupplierId, objects, range.start, range.end, currentView])
 
   
   const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
     if (!selectedObject || !selectedTransportType) {
+      latestSearchRequestRef.current += 1
+      setEvents([])
       setQuotaByDate({})
       return
     }
+
+    const requestId = latestSearchRequestRef.current + 1
+    latestSearchRequestRef.current = requestId
 
     const currentRange = rangeOverride || range
     const viewMode = viewOverride || viewRef.current
     const from = format(currentRange.start, 'yyyy-MM-dd')
     const to = format(currentRange.end, 'yyyy-MM-dd')
+    const cacheBust = Date.now()
     const supplierQuery = askonaSupplierId ? `&supplier_id=${askonaSupplierId}` : ''
     const selectedObjectData = objects.find(o => o.id === selectedObject)
     const objectCapacityRaw = selectedObjectData?.capacity_out
@@ -191,8 +201,8 @@ const BookingOut: React.FC = () => {
 
     try {
       const [slotsRes, objectScopeSlotsRes, quotaRes] = await Promise.all([
-        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&transport_type_id=${selectedTransportType}${supplierQuery}&booking_type=out`),
-        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&booking_type=out`).catch(() => ({ data: [] as TimeSlot[] })),
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&transport_type_id=${selectedTransportType}${supplierQuery}&booking_type=out&_=${cacheBust}`),
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&booking_type=out&_=${cacheBust}`).catch(() => ({ data: [] as TimeSlot[] })),
         axios.get<QuotaAvailability[]>(`${API_BASE}/api/volume-quotas/availability`, {
           params: {
             from_date: from,
@@ -200,9 +210,12 @@ const BookingOut: React.FC = () => {
             object_id: selectedObject,
             transport_type_id: selectedTransportType,
             direction: 'out',
+            _: cacheBust,
           },
         }).catch(() => ({ data: [] as QuotaAvailability[] })),
       ])
+
+      if (requestId !== latestSearchRequestRef.current) return
 
       const quotaMap: Record<string, { remaining: number; total: number | null }> = {}
       quotaRes.data.forEach(q => {
@@ -348,6 +361,7 @@ const BookingOut: React.FC = () => {
 
       setEvents(evts)
     } catch (e: any) {
+      if (requestId !== latestSearchRequestRef.current) return
       setError(e?.response?.data?.detail || '?? ??????? ????????? ?????')
       setQuotaByDate({})
     }
@@ -408,8 +422,10 @@ const BookingOut: React.FC = () => {
     )
   }
 
-  const handleBookingSuccess = () => {
-    if (selectedObject && selectedTransportType) handleSearch()
+  const handleBookingSuccess = async () => {
+    if (selectedObject && selectedTransportType) {
+      await handleSearch(range, viewRef.current)
+    }
   }
 
   const handleDownloadTemplate = async () => {
@@ -465,17 +481,14 @@ const BookingOut: React.FC = () => {
   const onRangeChange = (r: any) => {
     if (Array.isArray(r) && r.length) {
       setRange({ start: r[0], end: r[r.length - 1] })
-      if (selectedObject && selectedTransportType) handleSearch({ start: r[0], end: r[r.length - 1] }, viewRef.current)
     } else if (r?.start && r?.end) {
       setRange({ start: r.start, end: r.end })
-      if (selectedObject && selectedTransportType) handleSearch({ start: r.start, end: r.end }, viewRef.current)
     }
   }
 
   const onViewChange = (v: View) => {
     viewRef.current = v
     setCurrentView(v)
-    if (selectedObject && selectedTransportType) handleSearch(range, v)
   }
 
   const dayPropGetter = (date: Date) => {

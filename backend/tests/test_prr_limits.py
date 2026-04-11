@@ -99,6 +99,31 @@ def test_read_prr_limits(test_client, db_session):
     assert len(data) == 2
 
 
+def test_read_prr_limits_filtered_by_supplier(test_client, db_session):
+    test_object = models.Object(name="Test Object", object_type="warehouse")
+    test_zone = models.Zone(name="Test Zone")
+    db_session.add_all([test_object, test_zone])
+    db_session.commit()
+
+    supplier_a = models.Supplier(name="Supplier A", zone_id=test_zone.id)
+    supplier_b = models.Supplier(name="Supplier B", zone_id=test_zone.id)
+    db_session.add_all([supplier_a, supplier_b])
+    db_session.commit()
+
+    limit_a = models.PrrLimit(object_id=test_object.id, supplier_id=supplier_a.id, duration_minutes=60)
+    limit_b = models.PrrLimit(object_id=test_object.id, supplier_id=supplier_b.id, duration_minutes=90)
+    limit_without_supplier = models.PrrLimit(object_id=test_object.id, duration_minutes=120)
+    db_session.add_all([limit_a, limit_b, limit_without_supplier])
+    db_session.commit()
+
+    response = test_client.get(f"/api/prr-limits/?supplier_id={supplier_a.id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["supplier_id"] == supplier_a.id
+    assert data[0]["duration_minutes"] == 60
+
+
 def test_update_prr_limit(test_client, db_session):
     test_object = models.Object(name="Test Object", object_type="warehouse")
     db_session.add(test_object)

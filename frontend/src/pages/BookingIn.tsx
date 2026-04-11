@@ -155,6 +155,7 @@ const BookingIn: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [currentView, setCurrentView] = useState<View>('week')
   const viewRef = useRef<View>('week')
+  const latestSearchRequestRef = useRef(0)
   const supplierFieldRef = useRef<HTMLDivElement | null>(null)
   const [range, setRange] = useState<{ start: Date; end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) })
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -253,7 +254,6 @@ const BookingIn: React.FC = () => {
     if (selectedObject) localStorage.setItem('selectedObject', String(selectedObject))
     if (selectedSupplier) localStorage.setItem('selectedSupplier', String(selectedSupplier))
     if (selectedTransportType) localStorage.setItem('selectedTransportType_In', String(selectedTransportType))
-    if (selectedObject && selectedSupplier && selectedTransportType) handleSearch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedObject, selectedSupplier, selectedTransportType])
 
@@ -293,30 +293,40 @@ const BookingIn: React.FC = () => {
 
   useEffect(() => {
     if (objects.length && selectedObject && selectedSupplier && selectedTransportType) {
-      handleSearch()
+      handleSearch(range, currentView)
+      return
     }
+    latestSearchRequestRef.current += 1
+    setEvents([])
+    setQuotaByDate({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects])
+  }, [selectedObject, selectedSupplier, selectedTransportType, objects, range.start, range.end, currentView])
 
   
   const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
     if (!selectedObject || !selectedSupplier || !selectedTransportType) {
+      latestSearchRequestRef.current += 1
+      setEvents([])
       setQuotaByDate({})
       return
     }
+
+    const requestId = latestSearchRequestRef.current + 1
+    latestSearchRequestRef.current = requestId
 
     const currentRange = rangeOverride || range
     const viewMode = viewOverride || viewRef.current
     const from = format(currentRange.start, 'yyyy-MM-dd')
     const to = format(currentRange.end, 'yyyy-MM-dd')
+    const cacheBust = Date.now()
     const selectedObjectData = objects.find(o => o.id === selectedObject)
     const objectCapacityRaw = selectedObjectData?.capacity_in
     const objectCapacity = typeof objectCapacityRaw === 'number' && objectCapacityRaw > 0 ? objectCapacityRaw : null
 
     try {
       const [slotsRes, objectScopeSlotsRes, quotaRes] = await Promise.all([
-        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&supplier_id=${selectedSupplier}&transport_type_id=${selectedTransportType}&booking_type=in`),
-        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&booking_type=in`).catch(() => ({ data: [] as TimeSlot[] })),
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&supplier_id=${selectedSupplier}&transport_type_id=${selectedTransportType}&booking_type=in&_=${cacheBust}`),
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&booking_type=in&_=${cacheBust}`).catch(() => ({ data: [] as TimeSlot[] })),
         axios.get<QuotaAvailability[]>(`${API_BASE}/api/volume-quotas/availability`, {
           params: {
             from_date: from,
@@ -324,9 +334,12 @@ const BookingIn: React.FC = () => {
             object_id: selectedObject,
             transport_type_id: selectedTransportType,
             direction: 'in',
+            _: cacheBust,
           },
         }).catch(() => ({ data: [] as QuotaAvailability[] })),
       ])
+
+      if (requestId !== latestSearchRequestRef.current) return
 
       const quotaMap: Record<string, { remaining: number; total: number | null }> = {}
       quotaRes.data.forEach(q => {
@@ -457,6 +470,7 @@ const BookingIn: React.FC = () => {
 
       setEvents(evts)
     } catch (e: any) {
+      if (requestId !== latestSearchRequestRef.current) return
       setError(e?.response?.data?.detail || 'Не удалось загрузить слоты')
       setQuotaByDate({})
     }
@@ -517,8 +531,10 @@ const BookingIn: React.FC = () => {
     )
   }
 
-  const handleBookingSuccess = () => {
-    if (selectedObject && selectedSupplier) handleSearch()
+  const handleBookingSuccess = async () => {
+    if (selectedObject && selectedSupplier && selectedTransportType) {
+      await handleSearch(range, viewRef.current)
+    }
   }
 
   const handleDownloadTemplate = async () => {
@@ -572,17 +588,14 @@ const BookingIn: React.FC = () => {
   const onRangeChange = (r: any) => {
     if (Array.isArray(r) && r.length) {
       setRange({ start: r[0], end: r[r.length - 1] })
-      if (selectedObject && selectedSupplier) handleSearch({ start: r[0], end: r[r.length - 1] }, viewRef.current)
     } else if (r?.start && r?.end) {
       setRange({ start: r.start, end: r.end })
-      if (selectedObject && selectedSupplier) handleSearch({ start: r.start, end: r.end }, viewRef.current)
     }
   }
 
   const onViewChange = (v: View) => {
     viewRef.current = v
     setCurrentView(v)
-    if (selectedObject && selectedSupplier && selectedTransportType) handleSearch(range, v)
   }
 
   const handleSupplierInputChange = (value: string) => {

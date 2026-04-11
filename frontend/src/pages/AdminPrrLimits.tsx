@@ -1,8 +1,59 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const DURATION_VALIDATION_MESSAGE = 'Длительность должна быть > 0 и кратна 30 минутам'
+
+const CYRILLIC_TO_LATIN_MAP: Record<string, string> = {
+  '\u0430': 'a',
+  '\u0431': 'b',
+  '\u0432': 'v',
+  '\u0433': 'g',
+  '\u0434': 'd',
+  '\u0435': 'e',
+  '\u0451': 'yo',
+  '\u0436': 'zh',
+  '\u0437': 'z',
+  '\u0438': 'i',
+  '\u0439': 'y',
+  '\u043a': 'k',
+  '\u043b': 'l',
+  '\u043c': 'm',
+  '\u043d': 'n',
+  '\u043e': 'o',
+  '\u043f': 'p',
+  '\u0440': 'r',
+  '\u0441': 's',
+  '\u0442': 't',
+  '\u0443': 'u',
+  '\u0444': 'f',
+  '\u0445': 'kh',
+  '\u0446': 'ts',
+  '\u0447': 'ch',
+  '\u0448': 'sh',
+  '\u0449': 'sch',
+  '\u044a': '',
+  '\u044b': 'y',
+  '\u044c': '',
+  '\u044d': 'e',
+  '\u044e': 'yu',
+  '\u044f': 'ya',
+}
+
+const normalizeSearchValue = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+const transliterateRuToLatin = (value: string) =>
+  value
+    .split('')
+    .map((char) => CYRILLIC_TO_LATIN_MAP[char] ?? char)
+    .join('')
+
+const supplierNameCollator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true })
 
 interface PrrLimit {
   id?: number
@@ -84,15 +135,42 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [templateLoading, setTemplateLoading] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
   const [conflictChoices, setConflictChoices] = useState<Record<string, ConflictChoice>>({})
+  const [supplierFilterId, setSupplierFilterId] = useState<number | ''>('')
+  const [supplierFilterSearch, setSupplierFilterSearch] = useState('')
+  const [supplierFilterDropdownOpen, setSupplierFilterDropdownOpen] = useState(false)
+  const supplierFilterFieldRef = useRef<HTMLDivElement | null>(null)
 
   const token = useMemo(() => localStorage.getItem('token'), [])
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  const filteredSupplierFilterOptions = useMemo(() => {
+    const sortedSuppliers = [...suppliers].sort((a, b) =>
+      supplierNameCollator.compare(a.name || '', b.name || ''),
+    )
+    const query = normalizeSearchValue(supplierFilterSearch)
+    if (!query) return sortedSuppliers
+
+    const transliteratedQuery = transliterateRuToLatin(query)
+    return sortedSuppliers.filter((supplier) => {
+      const normalizedName = normalizeSearchValue(supplier.name || '')
+      const transliteratedName = transliterateRuToLatin(normalizedName)
+      return (
+        normalizedName.includes(query) ||
+        normalizedName.includes(transliteratedQuery) ||
+        transliteratedName.includes(query) ||
+        transliteratedName.includes(transliteratedQuery)
+      )
+    })
+  }, [supplierFilterSearch, suppliers])
 
   const load = async () => {
     setLoading(true)
     setError(null)
     try {
-      const { data } = await axios.get<PrrLimit[]>(`${API_BASE}/api/prr-limits/`, { headers })
+      const params: Record<string, number> = {}
+      if (supplierFilterId !== '') {
+        params.supplier_id = supplierFilterId
+      }
+      const { data } = await axios.get<PrrLimit[]>(`${API_BASE}/api/prr-limits/`, { headers, params })
       setItems(data)
     } catch (e: any) {
       setError('Не удалось загрузить лимиты')
@@ -119,8 +197,32 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   }
 
   useEffect(() => {
-    load()
     loadDropdowns()
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [supplierFilterId])
+
+  useEffect(() => {
+    if (supplierFilterId === '') {
+      setSupplierFilterSearch('')
+      return
+    }
+    const selected = suppliers.find((s) => s.id === supplierFilterId)
+    if (selected) setSupplierFilterSearch(selected.name)
+  }, [supplierFilterId, suppliers])
+
+  useEffect(() => {
+    const onDocumentMouseDown = (event: MouseEvent) => {
+      if (!supplierFilterFieldRef.current) return
+      if (!supplierFilterFieldRef.current.contains(event.target as Node)) {
+        setSupplierFilterDropdownOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', onDocumentMouseDown)
+    return () => document.removeEventListener('mousedown', onDocumentMouseDown)
   }, [])
 
   const resetForm = () => {
@@ -134,6 +236,54 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       return false
     }
     return true
+  }
+
+  const handleSupplierFilterSelect = (supplier: Supplier) => {
+    setSupplierFilterId(supplier.id)
+    setSupplierFilterSearch(supplier.name)
+    setSupplierFilterDropdownOpen(false)
+  }
+
+  const handleSupplierFilterInputChange = (value: string) => {
+    setSupplierFilterSearch(value)
+    setSupplierFilterDropdownOpen(true)
+
+    const normalizedValue = normalizeSearchValue(value)
+    if (!normalizedValue) {
+      setSupplierFilterId('')
+      return
+    }
+
+    const selected = typeof supplierFilterId === 'number'
+      ? suppliers.find((s) => s.id === supplierFilterId)
+      : null
+    if (selected && normalizeSearchValue(selected.name) === normalizedValue) return
+
+    const exact = suppliers.find((s) => normalizeSearchValue(s.name) === normalizedValue)
+    setSupplierFilterId(exact ? exact.id : '')
+  }
+
+  const handleSupplierFilterInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (filteredSupplierFilterOptions.length > 0) {
+        handleSupplierFilterSelect(filteredSupplierFilterOptions[0])
+      }
+      return
+    }
+    if (event.key === 'Escape') {
+      setSupplierFilterDropdownOpen(false)
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      setSupplierFilterDropdownOpen(true)
+    }
+  }
+
+  const handleClearSupplierFilter = () => {
+    setSupplierFilterSearch('')
+    setSupplierFilterId('')
+    setSupplierFilterDropdownOpen(true)
   }
 
   const handleSubmit = async () => {
@@ -400,6 +550,111 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       </div>
 
       <h3>Текущие лимиты</h3>
+      <div style={{ marginBottom: 12 }}>
+        <div ref={supplierFilterFieldRef} style={{ position: 'relative', maxWidth: 420 }}>
+          <label htmlFor="supplier-filter-input" style={{ display: 'block', marginBottom: 4 }}>Фильтр по поставщику:</label>
+          <div style={{ position: 'relative' }}>
+            <input
+              id="supplier-filter-input"
+              type="text"
+              value={supplierFilterSearch}
+              onFocus={() => setSupplierFilterDropdownOpen(true)}
+              onChange={(e) => handleSupplierFilterInputChange(e.target.value)}
+              onKeyDown={handleSupplierFilterInputKeyDown}
+              placeholder="Начните вводить поставщика"
+              autoComplete="off"
+              style={{ width: '100%', paddingRight: supplierFilterSearch ? 34 : undefined }}
+            />
+            {supplierFilterSearch && (
+              <button
+                type="button"
+                aria-label="Очистить фильтр по поставщику"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={handleClearSupplierFilter}
+                style={{
+                  position: 'absolute',
+                  right: 8,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  border: 'none',
+                  background: '#e5e7eb',
+                  color: '#374151',
+                  padding: 0,
+                  fontSize: 14,
+                  lineHeight: '18px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                }}
+                title="Очистить"
+              >
+                &times;
+              </button>
+            )}
+          </div>
+          {supplierFilterDropdownOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 4px)',
+                left: 0,
+                right: 0,
+                maxHeight: 220,
+                overflowY: 'auto',
+                border: '1px solid #d1d5db',
+                borderRadius: 10,
+                backgroundColor: '#fff',
+                boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)',
+                zIndex: 20,
+              }}
+            >
+              <div
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  setSupplierFilterId('')
+                  setSupplierFilterSearch('')
+                  setSupplierFilterDropdownOpen(false)
+                }}
+                style={{
+                  padding: '10px 12px',
+                  cursor: 'pointer',
+                  borderBottom: '1px solid #f1f5f9',
+                  backgroundColor: supplierFilterId === '' ? '#eef2ff' : '#fff',
+                }}
+              >
+                Все поставщики
+              </div>
+              {filteredSupplierFilterOptions.length === 0 ? (
+                <div style={{ padding: 10, color: '#6b7280', fontSize: 14 }}>
+                  Нет совпадений
+                </div>
+              ) : (
+                filteredSupplierFilterOptions.map((supplier) => (
+                  <div
+                    key={supplier.id}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      handleSupplierFilterSelect(supplier)
+                    }}
+                    style={{
+                      padding: '10px 12px',
+                      cursor: 'pointer',
+                      borderBottom: '1px solid #f1f5f9',
+                      backgroundColor: supplier.id === supplierFilterId ? '#eef2ff' : '#fff',
+                    }}
+                  >
+                    {supplier.name}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -439,3 +694,4 @@ const AdminPrrLimits: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 }
 
 export default AdminPrrLimits
+
