@@ -66,6 +66,8 @@ interface Booking {
 
   object_name?: string
 
+  booking_type?: 'in' | 'out' | null
+
 }
 
 
@@ -83,6 +85,8 @@ type Filters = {
   driver_name: string
 
   transport_sheet: string
+
+  booking_type: '' | 'in' | 'out'
 
   user_email: string
 
@@ -136,6 +140,8 @@ const defaultFilters = (): Filters => {
 
     transport_sheet: '',
 
+    booking_type: '',
+
     user_email: '',
 
     objects: [],
@@ -157,6 +163,7 @@ const clearedFilters = (): Filters => ({
   vehicle_plate: '',
   driver_name: '',
   transport_sheet: '',
+  booking_type: '',
   user_email: '',
   objects: [],
   date_from: '',
@@ -344,6 +351,12 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
     }
 
 
+
+    if (filters.booking_type) {
+
+      filtered = filtered.filter(b => b.booking_type === filters.booking_type)
+
+    }
 
     if (filters.objects.length > 0) {
 
@@ -607,6 +620,30 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
               style={{ width: '100%', padding: 8, fontSize: '14px' }}
 
             />
+
+          </div>
+
+          <div>
+
+            <label style={{ display: 'block', marginBottom: 4, fontSize: '14px' }}>Направление:</label>
+
+            <select
+
+              value={filters.booking_type}
+
+              onChange={e => setFilters(prev => ({ ...prev, booking_type: e.target.value as '' | 'in' | 'out' }))}
+
+              style={{ width: '100%', padding: 8, fontSize: '14px' }}
+
+            >
+
+              <option value="">Все</option>
+
+              <option value="in">Вход</option>
+
+              <option value="out">Выход</option>
+
+            </select>
 
           </div>
 

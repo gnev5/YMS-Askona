@@ -588,19 +588,19 @@ def export_bookings_xlsx(
     ws = wb.active
     ws.title = "bookings"
     ws.append([
-        "date",
-        "time_range",
-        "dock_name",
-        "object_name",
-        "vehicle_type",
-        "supplier_name",
-        "zone_name",
-        "transport_type",
-        "cubes",
-        "transport_sheet",
-        "status",
-        "user",
-        "booking_id",
+        "Дата",
+        "Время",
+        "Док",
+        "Объект",
+        "Тип ТС",
+        "Поставщик",
+        "Зона",
+        "Тип перевозки",
+        "Кубы",
+        "Транспортный лист",
+        "Статус",
+        "Пользователь",
+        "ID бронирования",
     ])
 
     for booking_id in unique_ids:
