@@ -264,6 +264,9 @@ class BookingWithDetails(BaseModel):
     booking_type: Optional[str] = None
     is_owner: bool = False
     can_modify: bool = False
+    is_after_noon_for_next_day_msk: bool = False
+    is_post_factum_msk: bool = False
+    is_created_today_for_today_msk: bool = False
 
     class Config:
         from_attributes = True

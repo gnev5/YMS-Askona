@@ -67,6 +67,9 @@ interface Booking {
   object_name?: string
 
   booking_type?: 'in' | 'out' | null
+  is_after_noon_for_next_day_msk?: boolean
+  is_post_factum_msk?: boolean
+  is_created_today_for_today_msk?: boolean
 
 }
 
@@ -965,7 +968,19 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               {filteredBookings.map(b => (
 
-                <tr key={b.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                <tr
+                  key={b.id}
+                  style={{
+                    borderBottom: '1px solid #f3f4f6',
+                    backgroundColor: b.is_post_factum_msk
+                      ? '#fee2e2'
+                      : b.is_created_today_for_today_msk
+                        ? '#fed7aa'
+                        : b.is_after_noon_for_next_day_msk
+                          ? '#fef9c3'
+                          : undefined,
+                  }}
+                >
 
                   <td style={{ padding: 8 }}>{formatDate(b.booking_date)}</td>
 

@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
 from typing import List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time, timezone
 import uuid
 import logging
 from .. import models, schemas
@@ -12,9 +12,15 @@ from ..deps import get_current_user
 from .prr_limits import get_duration
 from ..quota_utils import calculate_used_volume, get_quota_for_date
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import PatternFill
 from io import BytesIO
 
 router = APIRouter()
+MSK_TZ = timezone(timedelta(hours=3))
+NOON_MSK = time(12, 0)
+EXPORT_RED_FILL = PatternFill(fill_type="solid", fgColor="FFFEE2E2")
+EXPORT_ORANGE_FILL = PatternFill(fill_type="solid", fgColor="FFFED7AA")
+EXPORT_YELLOW_FILL = PatternFill(fill_type="solid", fgColor="FFFEF9C3")
 
 def _dock_matches_supplier_zone(dock: models.Dock, supplier_zone_id: int | None) -> bool:
     if supplier_zone_id is None:
@@ -22,6 +28,30 @@ def _dock_matches_supplier_zone(dock: models.Dock, supplier_zone_id: int | None)
     if not dock.available_zones:
         return True
     return any(zone.id == supplier_zone_id for zone in dock.available_zones)
+
+
+def _to_msk(created_at: datetime) -> datetime:
+    if created_at.tzinfo is None:
+        created_utc = created_at.replace(tzinfo=timezone.utc)
+    else:
+        created_utc = created_at.astimezone(timezone.utc)
+    return created_utc.astimezone(MSK_TZ)
+
+
+def _is_after_noon_for_next_day_msk(created_at: datetime, booking_date) -> bool:
+    created_msk = _to_msk(created_at)
+    return created_msk.time() > NOON_MSK and booking_date == (created_msk.date() + timedelta(days=1))
+
+
+def _is_post_factum_by_start_msk(created_at: datetime, booking_date, slot_start_time: time) -> bool:
+    created_msk = _to_msk(created_at)
+    slot_start_msk = datetime.combine(booking_date, slot_start_time).replace(tzinfo=MSK_TZ)
+    return created_msk > slot_start_msk
+
+
+def _is_created_today_for_today_msk(created_at: datetime, booking_date) -> bool:
+    created_msk = _to_msk(created_at)
+    return created_msk.date() == booking_date
 
 
 def _serialize_booking(db: Session, booking: models.Booking, include_user: bool = False):
@@ -66,6 +96,16 @@ def _serialize_booking(db: Session, booking: models.Booking, include_user: bool 
         "object_id": object_id,
         "object_name": object_name,
         "booking_type": booking.booking_type.value if getattr(booking, "booking_type", None) else None,
+        "is_after_noon_for_next_day_msk": _is_after_noon_for_next_day_msk(booking.created_at, first_slot.slot_date),
+        "is_post_factum_msk": _is_post_factum_by_start_msk(
+            booking.created_at,
+            first_slot.slot_date,
+            first_slot.start_time,
+        ),
+        "is_created_today_for_today_msk": _is_created_today_for_today_msk(
+            booking.created_at,
+            first_slot.slot_date,
+        ),
     }
 
     if include_user and booking.user:
@@ -74,6 +114,17 @@ def _serialize_booking(db: Session, booking: models.Booking, include_user: bool 
         data["user_full_name"] = booking.user.full_name
 
     return data
+
+
+def _resolve_export_row_fill(serialized: dict) -> PatternFill | None:
+    # Keep same priority as UI: red > orange > yellow.
+    if bool(serialized.get("is_post_factum_msk")):
+        return EXPORT_RED_FILL
+    if bool(serialized.get("is_created_today_for_today_msk")):
+        return EXPORT_ORANGE_FILL
+    if bool(serialized.get("is_after_noon_for_next_day_msk")):
+        return EXPORT_YELLOW_FILL
+    return None
 
 @router.post("/", response_model=schemas.Booking)
 def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -632,6 +683,22 @@ def export_bookings_xlsx(
             user_label,
             serialized.get("id") or "",
         ])
+
+        row_fill = _resolve_export_row_fill(serialized)
+        if row_fill is not None:
+            current_row = ws.max_row
+            for col_idx in range(1, ws.max_column + 1):
+                ws.cell(row=current_row, column=col_idx).fill = row_fill
+
+    legend_ws = wb.create_sheet(title="legend")
+    legend_ws.append(["Цвет", "HEX", "Значение"])
+    legend_ws.append(["", "#fee2e2", "постфактум"])
+    legend_ws.append(["", "#fed7aa", "сегодня на сегодня"])
+    legend_ws.append(["", "#fef9c3", "сегодня после 12:00 на завтра"])
+
+    legend_ws.cell(row=2, column=1).fill = EXPORT_RED_FILL
+    legend_ws.cell(row=3, column=1).fill = EXPORT_ORANGE_FILL
+    legend_ws.cell(row=4, column=1).fill = EXPORT_YELLOW_FILL
 
     buf = BytesIO()
     wb.save(buf)

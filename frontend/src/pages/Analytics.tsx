@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { addDays, format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
@@ -107,7 +107,15 @@ interface BookingsByZone {
   cubes_sum: number;
 }
 
+interface BookingsBySupplier {
+  supplier_name: string;
+  booking_count: number;
+  cubes_sum: number;
+  share_percent: number;
+}
+
 interface BookingsByHour {
+  date: string;
   hour: number;
   label: string;
   start_count: number;
@@ -139,10 +147,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
     format(new Date(), 'yyyy-MM-dd')
   );
   const [endDate, setEndDate] = useState<string>(
-    format(addDays(new Date(), 5), 'yyyy-MM-dd')
+    format(addDays(new Date(), 1), 'yyyy-MM-dd')
   );
   const [bookingsByDay, setBookingsByDay] = useState<BookingsByDay[]>([]);
   const [bookingsByZone, setBookingsByZone] = useState<BookingsByZone[]>([]);
+  const [bookingsBySupplier, setBookingsBySupplier] = useState<BookingsBySupplier[]>([]);
   const [bookingsByHour, setBookingsByHour] = useState<BookingsByHour[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -324,7 +333,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
         params.dock_type = selectedDockType;
       }
       
-      const [bookingsByDayResponse, bookingsByZoneResponse, bookingsByHourResponse] = await Promise.all([
+      const [bookingsByDayResponse, bookingsByZoneResponse, bookingsBySupplierResponse, bookingsByHourResponse] = await Promise.all([
         axios.get(
           `${API_BASE}/api/analytics/bookings-by-day`,
           { headers, params, paramsSerializer: serializeParams }
@@ -334,12 +343,17 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           { headers, params, paramsSerializer: serializeParams }
         ),
         axios.get(
+          `${API_BASE}/api/analytics/bookings-by-supplier`,
+          { headers, params, paramsSerializer: serializeParams }
+        ),
+        axios.get(
           `${API_BASE}/api/analytics/bookings-by-hour`,
           { headers, params, paramsSerializer: serializeParams }
         ),
       ]);
       setBookingsByDay(bookingsByDayResponse.data);
       setBookingsByZone(bookingsByZoneResponse.data);
+      setBookingsBySupplier(bookingsBySupplierResponse.data);
       setBookingsByHour(bookingsByHourResponse.data);
     } catch (err: any) {
       console.error('Error fetching analytics data:', err);
@@ -427,6 +441,94 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           'rgba(54, 162, 235, 1)',
           'rgba(153, 102, 255, 1)',
           'rgba(255, 99, 132, 1)',
+        ],
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const bookingsBySupplierChartData = {
+    labels: bookingsBySupplier.map((item) => `${item.supplier_name} (${item.share_percent}%)`),
+    datasets: [
+      {
+        label: 'Доли записей по поставщикам',
+        data: bookingsBySupplier.map((item) => item.booking_count),
+        backgroundColor: [
+          'rgba(99, 102, 241, 0.65)',
+          'rgba(16, 185, 129, 0.65)',
+          'rgba(245, 158, 11, 0.65)',
+          'rgba(239, 68, 68, 0.65)',
+          'rgba(14, 165, 233, 0.65)',
+          'rgba(168, 85, 247, 0.65)',
+          'rgba(236, 72, 153, 0.65)',
+          'rgba(132, 204, 22, 0.65)',
+          'rgba(251, 113, 133, 0.65)',
+          'rgba(2, 132, 199, 0.65)',
+        ],
+        borderColor: [
+          'rgba(99, 102, 241, 1)',
+          'rgba(16, 185, 129, 1)',
+          'rgba(245, 158, 11, 1)',
+          'rgba(239, 68, 68, 1)',
+          'rgba(14, 165, 233, 1)',
+          'rgba(168, 85, 247, 1)',
+          'rgba(236, 72, 153, 1)',
+          'rgba(132, 204, 22, 1)',
+          'rgba(251, 113, 133, 1)',
+          'rgba(2, 132, 199, 1)',
+        ],
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const formatCountBase = (value: number) => value.toLocaleString('ru-RU');
+  const formatCubeBase = (value: number) =>
+    value.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+  const baseBookingsByDay = bookingsByDay.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+  const baseCubesByDay = bookingsByDay.reduce((sum, item) => sum + (Number(item.cubes) || 0), 0);
+  const baseBookingsByStartHour = bookingsByHour.reduce((sum, item) => sum + (Number(item.start_count) || 0), 0);
+  const baseCubesByStartHour = bookingsByHour.reduce((sum, item) => sum + (Number(item.start_cubes) || 0), 0);
+  const baseBookingsByOccupiedHours = bookingsBySupplier.reduce((sum, item) => sum + (Number(item.booking_count) || 0), 0);
+  const baseCubesByOccupiedHours = bookingsBySupplier.reduce((sum, item) => sum + (Number(item.cubes_sum) || 0), 0);
+  const baseBookingsByZone = bookingsByZone.reduce((sum, item) => sum + (Number(item.booking_count) || 0), 0);
+  const baseCubesByZone = bookingsByZone.reduce((sum, item) => sum + (Number(item.cubes_sum) || 0), 0);
+  const supplierTotalBookings = bookingsBySupplier.reduce((sum, item) => sum + (Number(item.booking_count) || 0), 0);
+  const supplierTotalCubes = bookingsBySupplier.reduce((sum, item) => sum + (Number(item.cubes_sum) || 0), 0);
+  const supplierTotalCubesLabel = formatCubeBase(supplierTotalCubes);
+  const cubesBySupplierShareChartData = {
+    labels: bookingsBySupplier.map((item) => {
+      const share = supplierTotalCubes > 0 ? (Number(item.cubes_sum) / supplierTotalCubes) * 100 : 0;
+      return `${item.supplier_name} (${share.toFixed(2)}%)`;
+    }),
+    datasets: [
+      {
+        label: 'Доли кубов по поставщикам',
+        data: bookingsBySupplier.map((item) => item.cubes_sum),
+        backgroundColor: [
+          'rgba(99, 102, 241, 0.65)',
+          'rgba(16, 185, 129, 0.65)',
+          'rgba(245, 158, 11, 0.65)',
+          'rgba(239, 68, 68, 0.65)',
+          'rgba(14, 165, 233, 0.65)',
+          'rgba(168, 85, 247, 0.65)',
+          'rgba(236, 72, 153, 0.65)',
+          'rgba(132, 204, 22, 0.65)',
+          'rgba(251, 113, 133, 0.65)',
+          'rgba(2, 132, 199, 0.65)',
+        ],
+        borderColor: [
+          'rgba(99, 102, 241, 1)',
+          'rgba(16, 185, 129, 1)',
+          'rgba(245, 158, 11, 1)',
+          'rgba(239, 68, 68, 1)',
+          'rgba(14, 165, 233, 1)',
+          'rgba(168, 85, 247, 1)',
+          'rgba(236, 72, 153, 1)',
+          'rgba(132, 204, 22, 1)',
+          'rgba(251, 113, 133, 1)',
+          'rgba(2, 132, 199, 1)',
         ],
         borderWidth: 1,
       },
@@ -658,7 +760,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
         <div className="analytics-container">
           <div className="chart-row">
             <div className="chart-container">
-            <h2>Количество записей по дням</h2>
+            <h2>Количество записей по дням (база: {formatCountBase(baseBookingsByDay)})</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={bookingsCountChartData} options={chartOptions} />
             ) : (
@@ -667,7 +769,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           </div>
 
           <div className="chart-container">
-            <h2>Количество кубов по дням</h2>
+            <h2>Количество кубов по дням (база: {formatCubeBase(baseCubesByDay)} куб.)</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={cubesChartData} options={chartOptions} />
             ) : (
@@ -678,7 +780,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
 
           <div className="chart-row">
             <div className="chart-container">
-            <h2>Количество записей по часу начала</h2>
+            <h2>Количество записей по часу начала (база: {formatCountBase(baseBookingsByStartHour)})</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={bookingsByStartHourChartData} options={chartOptions} />
             ) : (
@@ -687,7 +789,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           </div>
 
           <div className="chart-container">
-            <h2>Количество кубов по часу начала</h2>
+            <h2>Количество кубов по часу начала (база: {formatCubeBase(baseCubesByStartHour)} куб.)</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={cubesByStartHourChartData} options={chartOptions} />
             ) : (
@@ -698,7 +800,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
 
           <div className="chart-row">
             <div className="chart-container">
-            <h2>Количество записей по занятым часам</h2>
+            <h2>Количество записей по занятым часам (база: {formatCountBase(baseBookingsByOccupiedHours)})</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={bookingsByOccupiedHoursChartData} options={chartOptions} />
             ) : (
@@ -707,7 +809,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           </div>
 
           <div className="chart-container">
-            <h2>Количество кубов по занятым часам</h2>
+            <h2>Количество кубов по занятым часам (база: {formatCubeBase(baseCubesByOccupiedHours)} куб.)</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={cubesByOccupiedHoursChartData} options={chartOptions} />
             ) : (
@@ -718,7 +820,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
 
           <div className="chart-row">
             <div className="chart-container">
-            <h2>Количество записей по зонам</h2>
+            <h2>Количество записей по зонам (база: {formatCountBase(baseBookingsByZone)})</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Pie data={bookingsByZoneChartData} />
             ) : (
@@ -727,9 +829,36 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           </div>
 
           <div className="chart-container">
-            <h2>Количество кубов по зонам</h2>
+            <h2>Количество кубов по зонам (база: {formatCubeBase(baseCubesByZone)} куб.)</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Pie data={cubesByZoneChartData} />
+            ) : (
+              <div>Загрузка диаграммы...</div>
+            )}
+          </div>
+          </div>
+
+          <div className="chart-row">
+            <div className="chart-container">
+            <h2>Доли записей по поставщикам (база: {formatCountBase(supplierTotalBookings)})</h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              bookingsBySupplier.length > 0 ? (
+                <Pie data={bookingsBySupplierChartData} />
+              ) : (
+                <div>Нет данных по поставщикам</div>
+              )
+            ) : (
+              <div>Загрузка диаграммы...</div>
+            )}
+          </div>
+          <div className="chart-container">
+            <h2>Доли кубов по поставщикам (база: {supplierTotalCubesLabel} куб.)</h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              bookingsBySupplier.length > 0 ? (
+                <Pie data={cubesBySupplierShareChartData} />
+              ) : (
+                <div>Нет данных по поставщикам</div>
+              )
             ) : (
               <div>Загрузка диаграммы...</div>
             )}
@@ -891,4 +1020,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
 };
 
 export default Analytics;
+
+
 
