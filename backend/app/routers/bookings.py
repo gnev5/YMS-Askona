@@ -17,7 +17,7 @@ from io import BytesIO
 
 router = APIRouter()
 MSK_TZ = timezone(timedelta(hours=3))
-NOON_MSK = time(12, 0)
+NOON_MSK = time(15, 0)
 EXPORT_RED_FILL = PatternFill(fill_type="solid", fgColor="FFFEE2E2")
 EXPORT_ORANGE_FILL = PatternFill(fill_type="solid", fgColor="FFFED7AA")
 EXPORT_YELLOW_FILL = PatternFill(fill_type="solid", fgColor="FFFEF9C3")
@@ -694,7 +694,7 @@ def export_bookings_xlsx(
     legend_ws.append(["Цвет", "HEX", "Значение"])
     legend_ws.append(["", "#fee2e2", "постфактум"])
     legend_ws.append(["", "#fed7aa", "сегодня на сегодня"])
-    legend_ws.append(["", "#fef9c3", "сегодня после 12:00 на завтра"])
+    legend_ws.append(["", "#fef9c3", "сегодня после 15:00 на завтра"])
 
     legend_ws.cell(row=2, column=1).fill = EXPORT_RED_FILL
     legend_ws.cell(row=3, column=1).fill = EXPORT_ORANGE_FILL
