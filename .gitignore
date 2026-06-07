@@ -34,6 +34,7 @@ coverage.xml
 .dmypy.json
 .python-version
 .env
+.env.test
 .venv
 env/
 venv/

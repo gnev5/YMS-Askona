@@ -1,0 +1,80 @@
+name: yms-askona-test
+
+services:
+  test_db:
+    image: postgres:16
+    container_name: yms_test_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yms_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-yms_test}
+    volumes:
+      - test_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  test_backend:
+    image: ${BACKEND_IMAGE:-vallabe/ymsaskona-backend:test-latest}
+    container_name: yms_test_backend
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yms_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-yms_test}
+      POSTGRES_HOST: test_db
+      POSTGRES_PORT: 5432
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-180}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:?FRONTEND_ORIGINS is required}
+      PYTHONPATH: /app
+    depends_on:
+      test_db:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-18000}:8000"
+    volumes:
+      - ./backups:/app/backups
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)\"",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  test_frontend:
+    image: ${FRONTEND_IMAGE:-vallabe/ymsaskona-frontend:test-latest}
+    container_name: yms_test_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL is required}
+    depends_on:
+      test_backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-15173}:5173"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  test_db_data:
