@@ -62,7 +62,6 @@ jobs:
             APP_DIR=/home/gnev5hermes/yms-askona-test
             REPO_URL=https://github.com/gnev5/YMS-Askona.git
             BRANCH=test
-            SHORT_SHA=${GITHUB_SHA::7}
 
             mkdir -p "$APP_DIR"
             if [ ! -d "$APP_DIR/.git" ]; then
@@ -72,6 +71,7 @@ jobs:
             cd "$APP_DIR"
             git fetch origin "$BRANCH"
             git reset --hard "origin/$BRANCH"
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
             mkdir -p backups
             test -f .env.test
 
