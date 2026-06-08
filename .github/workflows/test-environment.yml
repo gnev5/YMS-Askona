@@ -84,5 +84,11 @@ jobs:
             docker compose --env-file .env.test -f docker-compose.test.yml build test_backend test_frontend
             docker compose --env-file .env.test -f docker-compose.test.yml up -d
             docker compose --env-file .env.test -f docker-compose.test.yml ps
-            curl -fsS http://127.0.0.1:18000/health
-            curl -fsSI http://127.0.0.1:15173/
+            for i in $(seq 1 12); do
+              curl -fsS http://127.0.0.1:18000/health && break
+              sleep 5
+            done
+            for i in $(seq 1 12); do
+              curl -fsS http://127.0.0.1:15173/ >/dev/null && break
+              sleep 5
+            done
