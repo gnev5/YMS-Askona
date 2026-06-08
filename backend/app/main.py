@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .db import engine, Base
@@ -14,15 +16,22 @@ logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
 app = FastAPI(title="YMS Backend")
 
-# CORS for frontend dev
-# CORS: ограничиваемся понятными фронт-источниками, чтобы не блокировало preflight с credentials
-FRONTEND_ORIGINS = [
+DEFAULT_FRONTEND_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:4173",
     "http://127.0.0.1:4173",
-    "http://158.160.94.205:5173"
+    "http://158.160.94.205:5173",
 ]
+
+
+def _parse_frontend_origins(value: str | None) -> list[str]:
+    if not value:
+        return DEFAULT_FRONTEND_ORIGINS
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
+FRONTEND_ORIGINS = _parse_frontend_origins(os.getenv("FRONTEND_ORIGINS"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,6 +43,12 @@ app.add_middleware(
 
 # Create tables on startup (simple bootstrap; replace with migrations in production)
 Base.metadata.create_all(bind=engine)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(docks.router, prefix="/api/docks", tags=["docks"])
