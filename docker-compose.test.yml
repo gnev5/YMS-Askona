@@ -23,7 +23,10 @@ services:
         max-file: "3"
 
   test_backend:
-    image: ${BACKEND_IMAGE:-vallabe/ymsaskona-backend:test-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-ymsaskona-backend:test-local}
     container_name: yms_test_backend
     restart: unless-stopped
     environment:
@@ -60,7 +63,10 @@ services:
         max-file: "3"
 
   test_frontend:
-    image: ${FRONTEND_IMAGE:-vallabe/ymsaskona-frontend:test-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: ${FRONTEND_IMAGE:-ymsaskona-frontend:test-local}
     container_name: yms_test_frontend
     restart: unless-stopped
     environment:

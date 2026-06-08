@@ -14,10 +14,10 @@ router = APIRouter()
 
 
 def _validate_duration(duration: int) -> None:
-    if duration < 0 or duration % 30 != 0:
+    if duration <= 0 or duration % 30 != 0:
         raise HTTPException(
             status_code=400,
-            detail="duration_minutes must be > 0 and multiple of 30",
+            detail="Длительность должна быть неотрицательной и кратной 30 минутам",
         )
 
 
