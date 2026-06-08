@@ -65,7 +65,10 @@ jobs:
 
             mkdir -p "$APP_DIR"
             if [ ! -d "$APP_DIR/.git" ]; then
-              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+              TMP_DIR=$(mktemp -d)
+              git clone --branch "$BRANCH" "$REPO_URL" "$TMP_DIR"
+              cp -a "$TMP_DIR"/. "$APP_DIR"/
+              rm -rf "$TMP_DIR"
             fi
 
             cd "$APP_DIR"
