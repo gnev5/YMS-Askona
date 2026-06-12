@@ -73,6 +73,21 @@ interface Booking {
 
 }
 
+interface PaginatedBookingsResponse {
+  items: Booking[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+interface ObjectOption {
+  id: number
+  name: string
+}
+
+const DEFAULT_PAGE_SIZE = 50
+
 
 
 type Filters = {
@@ -180,14 +195,17 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
   const { user } = useAuth()
 
-  const [bookings, setBookings] = useState<Booking[]>([])
-
   const [filteredBookings, setFilteredBookings] = useState<Booking[]>([])
 
   const [loading, setLoading] = useState(false)
 
   const [savingTransportSheet, setSavingTransportSheet] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [totalBookings, setTotalBookings] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
+  const [objectOptions, setObjectOptions] = useState<ObjectOption[]>([])
 
   const [error, setError] = useState<string | null>(null)
 
@@ -203,60 +221,33 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
 
-
-
-  const objectOptions = useMemo(() => {
-
-    const map = new Map<number, string>()
-
-    bookings.forEach(b => {
-
-      if (b.object_id && b.object_name) {
-
-        map.set(b.object_id, b.object_name)
-
-      }
-
-    })
-
-    return Array.from(map.entries())
-
-      .map(([id, name]) => ({ id, name }))
-
-      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-
-  }, [bookings])
-
-
-
-  const normalizeBookingDate = (dateStr: string) => dateStr?.split('T')[0] || dateStr
-
-  const bookingSortValue = (b: Booking) => {
-
-    const datePart = normalizeBookingDate(b.booking_date)
-
-    const dateVal = new Date(datePart).getTime()
-
-    const [hh = '00', mm = '00'] = (b.start_time || '').slice(0, 5).split(':')
-
-    const minutesVal = Number(hh) * 60 + Number(mm)
-
-    return { dateVal, minutesVal }
-
+  const updateFilters = (patch: Partial<Filters>) => {
+    setCurrentPage(1)
+    setFilters(prev => ({ ...prev, ...patch }))
   }
 
-  const sortByDateTime = (a: Booking, b: Booking) => {
+  const buildBookingQueryParams = (includePagination = true) => {
+    const params = new URLSearchParams()
 
-    const av = bookingSortValue(a)
+    if (includePagination) {
+      params.append('page', currentPage.toString())
+      params.append('page_size', pageSize.toString())
+    }
 
-    const bv = bookingSortValue(b)
+    if (filters.supplier) params.append('supplier', filters.supplier)
+    if (filters.zone) params.append('zone', filters.zone)
+    if (filters.transport_type) params.append('transport_type', filters.transport_type)
+    if (filters.vehicle_plate) params.append('vehicle_plate', filters.vehicle_plate)
+    if (filters.driver_name) params.append('driver_name', filters.driver_name)
+    if (filters.transport_sheet) params.append('transport_sheet', filters.transport_sheet)
+    if (filters.booking_type) params.append('booking_type', filters.booking_type)
+    if (filters.date_from) params.append('date_from', filters.date_from)
+    if (filters.date_to) params.append('date_to', filters.date_to)
+    if (filters.only_owner) params.append('only_owner', 'true')
+    if (user?.role === 'admin' && filters.user_email) params.append('user_email', filters.user_email)
+    filters.objects.forEach(id => params.append('object_id', id.toString()))
 
-    if (av.dateVal !== bv.dateVal) return bv.dateVal - av.dateVal // newest date first
-
-    if (av.minutesVal !== bv.minutesVal) return bv.minutesVal - av.minutesVal // latest time first
-
-    return 0 // keep existing order when time matches
-
+    return params
   }
 
 
@@ -270,14 +261,17 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
     try {
 
       const endpoint = user?.role === 'admin' ? '/api/bookings/all' : '/api/bookings/my'
+      const params = buildBookingQueryParams()
+      const query = params.toString()
+      const url = query ? `${API_BASE}${endpoint}?${query}` : `${API_BASE}${endpoint}`
+      const { data } = await axios.get<PaginatedBookingsResponse>(url, { headers })
 
-      const { data } = await axios.get<Booking[]>(`${API_BASE}${endpoint}`, { headers })
-
-      const sorted = [...data].sort(sortByDateTime)
-
-      setBookings(sorted)
-
-      setFilteredBookings(sorted)
+      setFilteredBookings(data.items)
+      setTotalBookings(data.total)
+      setTotalPages(data.total_pages)
+      if (data.page !== currentPage) {
+        setCurrentPage(data.page)
+      }
 
     } catch (e: any) {
 
@@ -293,127 +287,28 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
   }
 
-
-
-  const applyFilters = () => {
-
-    let filtered = bookings
-
-
-
-    if (filters.supplier) {
-
-      filtered = filtered.filter(b => b.supplier_name?.toLowerCase().includes(filters.supplier.toLowerCase()))
-
+  const loadObjects = async () => {
+    try {
+      const { data } = await axios.get<ObjectOption[]>(`${API_BASE}/api/objects/`, { headers })
+      setObjectOptions([...data].sort((a, b) => a.name.localeCompare(b.name, 'ru')))
+    } catch (_e: any) {
+      // Не блокируем экран бронирований, если список объектов временно недоступен.
     }
-
-
-
-    if (filters.zone) {
-
-      filtered = filtered.filter(b => b.zone_name?.toLowerCase().includes(filters.zone.toLowerCase()))
-
-    }
-
-
-
-    if (filters.transport_type) {
-
-      filtered = filtered.filter(b => b.transport_type_name?.toLowerCase().includes(filters.transport_type.toLowerCase()))
-
-    }
-
-
-
-    if (filters.vehicle_plate) {
-
-      filtered = filtered.filter(b => b.vehicle_plate.toLowerCase().includes(filters.vehicle_plate.toLowerCase()))
-
-    }
-
-
-
-    if (filters.driver_name) {
-
-      filtered = filtered.filter(b => {
-
-        const driverName = (b.driver_full_name || b.driver_name || '').toLowerCase()
-
-        return driverName.includes(filters.driver_name.toLowerCase())
-
-      })
-
-    }
-
-
-
-    if (filters.transport_sheet) {
-
-      filtered = filtered.filter(b => (b.transport_sheet || '').toLowerCase().includes(filters.transport_sheet.toLowerCase()))
-
-    }
-
-
-
-    if (filters.booking_type) {
-
-      filtered = filtered.filter(b => b.booking_type === filters.booking_type)
-
-    }
-
-    if (filters.objects.length > 0) {
-
-      filtered = filtered.filter(b => b.object_id && filters.objects.includes(b.object_id))
-
-    }
-
-
-
-    if (filters.date_from) {
-
-      filtered = filtered.filter(b => normalizeBookingDate(b.booking_date) >= filters.date_from)
-
-    }
-
-
-
-    if (filters.date_to) {
-
-      filtered = filtered.filter(b => normalizeBookingDate(b.booking_date) <= filters.date_to)
-
-    }
-
-
-
-    if (filters.user_email && user?.role === 'admin') {
-
-      filtered = filtered.filter(b =>
-
-        (b.user_email || '').toLowerCase().includes(filters.user_email.toLowerCase()) ||
-
-        (b.user_full_name || '').toLowerCase().includes(filters.user_email.toLowerCase())
-
-      )
-
-    }
-
-    if (filters.only_owner) {
-
-      filtered = filtered.filter(b => Boolean(b.is_owner))
-
-    }
-
-
-
-    setFilteredBookings(filtered)
-
   }
 
 
 
-  useEffect(() => { loadBookings() }, [])
+  useEffect(() => {
+    loadObjects()
+  }, [])
 
-  useEffect(() => { applyFilters() }, [filters, bookings])
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadBookings()
+    }, 250)
+
+    return () => window.clearTimeout(timer)
+  }, [filters, currentPage, pageSize, user?.role])
 
 
 
@@ -514,8 +409,8 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
     return null
   }
 
-  const exportToExcel = async () => {
-    if (filteredBookings.length === 0) {
+  const exportToExcel = async (variant: 'default' | 'start-end' = 'default') => {
+    if (totalBookings === 0) {
       setError('Нет данных для выгрузки по текущим фильтрам')
       return
     }
@@ -525,12 +420,14 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
     setSuccess(null)
 
     try {
-      const bookingIds = filteredBookings.map(b => b.id)
+      const params = buildBookingQueryParams(false)
+      params.append('variant', variant)
+      const endpoint = `${API_BASE}/api/bookings/export/xlsx?${params.toString()}`
       const response = await axios.post(
-        `${API_BASE}/api/bookings/export/xlsx`,
-        bookingIds,
+        endpoint,
+        null,
         {
-          headers: { ...headers, 'Content-Type': 'application/json' },
+          headers,
           responseType: 'blob',
         }
       )
@@ -539,7 +436,11 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
         [response.data],
         { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
       )
-      const filename = getFilenameFromDisposition(response.headers['content-disposition']) || `my_bookings_export_${Date.now()}.xlsx`
+      const filename = getFilenameFromDisposition(response.headers['content-disposition']) || (
+        variant === 'start-end'
+          ? `my_bookings_start_end_export_${Date.now()}.xlsx`
+          : `my_bookings_export_${Date.now()}.xlsx`
+      )
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -557,6 +458,9 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
       setExporting(false)
     }
   }
+
+  const pageStart = totalBookings === 0 ? 0 : (currentPage - 1) * pageSize + 1
+  const pageEnd = totalBookings === 0 ? 0 : Math.min(totalBookings, currentPage * pageSize)
 
 
 
@@ -582,7 +486,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
 
 
-      <h3>{user?.role === 'admin' ? 'Все бронирования' : 'Мои бронирования'} ({filteredBookings.length})</h3>
+      <h3>{user?.role === 'admin' ? 'Все бронирования' : 'Мои бронирования'} ({totalBookings})</h3>
 
       
 
@@ -616,7 +520,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.supplier}
 
-              onChange={e => setFilters(prev => ({ ...prev, supplier: e.target.value }))}
+              onChange={e => updateFilters({ supplier: e.target.value })}
 
               placeholder="Введите название поставщика"
 
@@ -634,7 +538,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.booking_type}
 
-              onChange={e => setFilters(prev => ({ ...prev, booking_type: e.target.value as '' | 'in' | 'out' }))}
+              onChange={e => updateFilters({ booking_type: e.target.value as '' | 'in' | 'out' })}
 
               style={{ width: '100%', padding: 8, fontSize: '14px' }}
 
@@ -660,7 +564,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.zone}
 
-              onChange={e => setFilters(prev => ({ ...prev, zone: e.target.value }))}
+              onChange={e => updateFilters({ zone: e.target.value })}
 
               placeholder="Введите зону"
 
@@ -680,7 +584,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.transport_type}
 
-              onChange={e => setFilters(prev => ({ ...prev, transport_type: e.target.value }))}
+              onChange={e => updateFilters({ transport_type: e.target.value })}
 
               placeholder="Введите тип перевозки"
 
@@ -700,7 +604,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.vehicle_plate}
 
-              onChange={e => setFilters(prev => ({ ...prev, vehicle_plate: e.target.value }))}
+              onChange={e => updateFilters({ vehicle_plate: e.target.value })}
 
               placeholder="Введите номер авто"
 
@@ -720,7 +624,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.driver_name}
 
-              onChange={e => setFilters(prev => ({ ...prev, driver_name: e.target.value }))}
+              onChange={e => updateFilters({ driver_name: e.target.value })}
 
               placeholder="Введите ФИО водителя"
 
@@ -740,7 +644,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.transport_sheet}
 
-              onChange={e => setFilters(prev => ({ ...prev, transport_sheet: e.target.value }))}
+              onChange={e => updateFilters({ transport_sheet: e.target.value })}
 
               placeholder="Введите номер ТЛ"
 
@@ -764,7 +668,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
                 const selectedIds = Array.from(e.target.selectedOptions).map(opt => Number(opt.value))
 
-                setFilters(prev => ({ ...prev, objects: selectedIds }))
+                updateFilters({ objects: selectedIds })
 
               }}
 
@@ -796,7 +700,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.date_from}
 
-              onChange={e => setFilters(prev => ({ ...prev, date_from: e.target.value }))}
+              onChange={e => updateFilters({ date_from: e.target.value })}
 
               style={{ width: '100%', padding: 8, fontSize: '14px' }}
 
@@ -814,7 +718,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
               value={filters.date_to}
 
-              onChange={e => setFilters(prev => ({ ...prev, date_to: e.target.value }))}
+              onChange={e => updateFilters({ date_to: e.target.value })}
 
               style={{ width: '100%', padding: 8, fontSize: '14px' }}
 
@@ -834,7 +738,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
                 value={filters.user_email}
 
-                onChange={e => setFilters(prev => ({ ...prev, user_email: e.target.value }))}
+                onChange={e => updateFilters({ user_email: e.target.value })}
 
                 placeholder="Введите почту или ФИО пользователя"
 
@@ -854,14 +758,17 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
             <input
               type="checkbox"
               checked={filters.only_owner}
-              onChange={e => setFilters(prev => ({ ...prev, only_owner: e.target.checked }))}
+              onChange={e => updateFilters({ only_owner: e.target.checked })}
             />
             Только мои (я владелец)
           </label>
 
           <button 
             type="button"
-            onClick={() => setFilters(clearedFilters())}
+            onClick={() => {
+              setCurrentPage(1)
+              setFilters(clearedFilters())
+            }}
 
             style={{ 
 
@@ -887,7 +794,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
           <button
             type="button"
-            onClick={exportToExcel}
+            onClick={() => exportToExcel()}
             disabled={exporting}
             style={{
               backgroundColor: '#059669',
@@ -899,7 +806,24 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
               opacity: exporting ? 0.8 : 1
             }}
           >
-            {exporting ? 'Exporting...' : 'Export Excel'}
+            {exporting ? '\u0412\u044b\u0433\u0440\u0443\u0437\u043a\u0430...' : '\u041f\u043e\u043b\u043d\u0430\u044f \u0432\u044b\u0433\u0440\u0443\u0437\u043a\u0430 Excel'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => exportToExcel('start-end')}
+            disabled={exporting}
+            style={{
+              backgroundColor: '#1d4ed8',
+              color: 'white',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: 4,
+              cursor: exporting ? 'not-allowed' : 'pointer',
+              opacity: exporting ? 0.8 : 1
+            }}
+          >
+            {exporting ? '\u0412\u044b\u0433\u0440\u0443\u0437\u043a\u0430...' : '\u0412\u044b\u0433\u0440\u0443\u0437\u043a\u0430 \u043d\u0430\u0447\u0430\u043b\u043e/\u043e\u043a\u043e\u043d\u0447\u0430\u043d\u0438\u0435 Excel'}
           </button>
 
         </div>
@@ -907,6 +831,31 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
       </div>
 
       
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+        <div style={{ color: '#4b5563', fontSize: 14 }}>
+          {totalBookings > 0 ? `Показано ${pageStart}-${pageEnd} из ${totalBookings}` : 'Нет записей'}
+        </div>
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={loading || currentPage <= 1}
+            >
+              Назад
+            </button>
+            <span style={{ fontSize: 14 }}>{`Страница ${currentPage} из ${totalPages}`}</span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={loading || currentPage >= totalPages}
+            >
+              Вперед
+            </button>
+          </div>
+        )}
+      </div>
 
       {loading ? (
 
@@ -916,7 +865,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
         <div style={{ color: '#6b7280', textAlign: 'center', padding: 32 }}>
 
-          {bookings.length === 0
+          {totalBookings === 0
 
             ? (user?.role === 'admin' ? 'Пока нет бронирований' : 'У вас пока нет бронирований')
 

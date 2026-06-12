@@ -271,6 +271,14 @@ class BookingWithDetails(BaseModel):
     class Config:
         from_attributes = True
 
+
+class BookingListPage(BaseModel):
+    items: List[BookingWithDetails]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
 # Supplier schemas
 class SupplierBase(BaseModel):
     name: str

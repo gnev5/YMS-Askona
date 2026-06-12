@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import { Calendar, dateFnsLocalizer, SlotInfo, View } from 'react-big-calendar'
 import { format, parse, startOfWeek, getDay, addDays } from 'date-fns'
@@ -23,6 +23,12 @@ interface YmsObject {
   object_type: string
   capacity_in?: number | null
   capacity_out?: number | null
+}
+
+interface Supplier {
+  id: number
+  name: string
+  transport_types?: TransportType[]
 }
 
 interface TransportType {
@@ -82,13 +88,67 @@ interface QuotaAvailability {
   remaining_volume: number
 }
 
+const CYRILLIC_TO_LATIN_MAP: Record<string, string> = {
+  '\u0430': 'a',
+  '\u0431': 'b',
+  '\u0432': 'v',
+  '\u0433': 'g',
+  '\u0434': 'd',
+  '\u0435': 'e',
+  '\u0451': 'yo',
+  '\u0436': 'zh',
+  '\u0437': 'z',
+  '\u0438': 'i',
+  '\u0439': 'y',
+  '\u043a': 'k',
+  '\u043b': 'l',
+  '\u043c': 'm',
+  '\u043d': 'n',
+  '\u043e': 'o',
+  '\u043f': 'p',
+  '\u0440': 'r',
+  '\u0441': 's',
+  '\u0442': 't',
+  '\u0443': 'u',
+  '\u0444': 'f',
+  '\u0445': 'kh',
+  '\u0446': 'ts',
+  '\u0447': 'ch',
+  '\u0448': 'sh',
+  '\u0449': 'sch',
+  '\u044a': '',
+  '\u044b': 'y',
+  '\u044c': '',
+  '\u044d': 'e',
+  '\u044e': 'yu',
+  '\u044f': 'ya',
+}
+
+const normalizeSearchValue = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+const transliterateRuToLatin = (value: string) =>
+  value
+    .split('')
+    .map((char) => CYRILLIC_TO_LATIN_MAP[char] ?? char)
+    .join('')
+
+const supplierNameCollator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true })
+
 const BookingOut: React.FC = () => {
   const [objects, setObjects] = useState<YmsObject[]>([])
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [transportTypes, setTransportTypes] = useState<TransportType[]>([])
   const [docks, setDocks] = useState<Dock[]>([])
   const [selectedObject, setSelectedObject] = useState<number | null>(null)
+  const [selectedSupplier, setSelectedSupplier] = useState<number | null>(null)
+  const [supplierSearch, setSupplierSearch] = useState('')
+  const [supplierDropdownOpen, setSupplierDropdownOpen] = useState(false)
   const [selectedTransportType, setSelectedTransportType] = useState<number | null>(null)
-  const [askonaSupplierId, setAskonaSupplierId] = useState<number | null>(null)
   const [events, setEvents] = useState<EventItem[]>([])
   const [quotaByDate, setQuotaByDate] = useState<Record<string, { remaining: number; total: number | null }>>({})
   const initialWeekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
@@ -96,6 +156,7 @@ const BookingOut: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('week')
   const viewRef = useRef<View>('week')
   const latestSearchRequestRef = useRef(0)
+  const supplierFieldRef = useRef<HTMLDivElement | null>(null)
   const [range, setRange] = useState<{ start: Date; end: Date }>({ start: initialWeekStart, end: addDays(initialWeekStart, 6) })
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<{ start: Date; end: Date; slotId: number; availableDocks?: number[] } | null>(null)
@@ -110,6 +171,34 @@ const BookingOut: React.FC = () => {
 
   const token = localStorage.getItem('token')
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  const availableTransportTypes = selectedSupplier
+    ? suppliers.find(s => s.id === selectedSupplier)?.transport_types || transportTypes
+    : transportTypes
+  const filteredSuppliers = useMemo(() => {
+    const sortedSuppliers = [...suppliers].sort((a, b) =>
+      supplierNameCollator.compare(a.name || '', b.name || ''),
+    )
+    const query = normalizeSearchValue(supplierSearch)
+    if (!query) return sortedSuppliers
+
+    const transliteratedQuery = transliterateRuToLatin(query)
+    return sortedSuppliers.filter((supplier) => {
+      const normalizedName = normalizeSearchValue(supplier.name || '')
+      const transliteratedName = transliterateRuToLatin(normalizedName)
+      return (
+        normalizedName.includes(query) ||
+        normalizedName.includes(transliteratedQuery) ||
+        transliteratedName.includes(query) ||
+        transliteratedName.includes(transliteratedQuery)
+      )
+    })
+  }, [supplierSearch, suppliers])
+
+  const handleSupplierSelect = (supplier: Supplier) => {
+    setSelectedSupplier(supplier.id)
+    setSupplierSearch(supplier.name)
+    setSupplierDropdownOpen(false)
+  }
 
   const formatBookingTooltip = (bookings?: SlotBookingInfo[]) => {
     if (!bookings || bookings.length === 0) return undefined
@@ -139,9 +228,8 @@ const BookingOut: React.FC = () => {
     }
 
     const fetchSuppliers = async () => {
-      const { data } = await axios.get<any[]>(`${API_BASE}/api/suppliers`)
-      const askona = data.find(s => s.name === 'Аскона')
-      if (askona) setAskonaSupplierId(askona.id)
+      const { data } = await axios.get<Supplier[]>(`${API_BASE}/api/suppliers/my`, { headers })
+      setSuppliers(data)
     }
 
     const fetchDocks = async () => {
@@ -155,19 +243,67 @@ const BookingOut: React.FC = () => {
     fetchDocks()
 
     const savedObject = localStorage.getItem('lastSelectedObject_BookingOut')
+    const savedSupplier = localStorage.getItem('lastSelectedSupplier_BookingOut')
     const savedTransportType = localStorage.getItem('lastSelectedTransportType_BookingOut')
     if (savedObject) setSelectedObject(Number(savedObject))
+    if (savedSupplier) setSelectedSupplier(Number(savedSupplier))
     if (savedTransportType) setSelectedTransportType(Number(savedTransportType))
   }, [])
 
   useEffect(() => {
     if (selectedObject) localStorage.setItem('lastSelectedObject_BookingOut', String(selectedObject))
+    if (selectedSupplier) localStorage.setItem('lastSelectedSupplier_BookingOut', String(selectedSupplier))
     if (selectedTransportType) localStorage.setItem('lastSelectedTransportType_BookingOut', String(selectedTransportType))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedObject, selectedTransportType])
+  }, [selectedObject, selectedSupplier, selectedTransportType])
 
   useEffect(() => {
-    if (objects.length && selectedObject && selectedTransportType) {
+    if (selectedSupplier && suppliers.some((supplier) => supplier.id === selectedSupplier)) return
+    if (suppliers.length === 1) {
+      setSelectedSupplier(suppliers[0].id)
+      return
+    }
+    if (selectedSupplier && !suppliers.some((supplier) => supplier.id === selectedSupplier)) {
+      setSelectedSupplier(null)
+    }
+  }, [selectedSupplier, suppliers])
+
+  useEffect(() => {
+    if (!selectedSupplier) return
+    const selected = suppliers.find((supplier) => supplier.id === selectedSupplier)
+    if (selected) setSupplierSearch(selected.name)
+  }, [selectedSupplier, suppliers])
+
+  useEffect(() => {
+    const onDocumentMouseDown = (event: MouseEvent) => {
+      if (!supplierFieldRef.current) return
+      if (!supplierFieldRef.current.contains(event.target as Node)) {
+        setSupplierDropdownOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', onDocumentMouseDown)
+    return () => document.removeEventListener('mousedown', onDocumentMouseDown)
+  }, [])
+
+  useEffect(() => {
+    if (!selectedSupplier) return
+
+    const selected = suppliers.find((supplier) => supplier.id === selectedSupplier)
+    if (!selectedTransportType && selected?.transport_types?.length === 1) {
+      setSelectedTransportType(selected.transport_types[0].id)
+    }
+  }, [selectedSupplier, selectedTransportType, suppliers])
+
+  useEffect(() => {
+    const allowedTransportTypeIds = new Set(availableTransportTypes.map((transportType) => transportType.id))
+    if (selectedTransportType && !allowedTransportTypeIds.has(selectedTransportType)) {
+      setSelectedTransportType(null)
+    }
+  }, [availableTransportTypes, selectedTransportType])
+
+  useEffect(() => {
+    if (objects.length && selectedObject && selectedSupplier && selectedTransportType) {
       handleSearch(range, currentView)
       return
     }
@@ -175,11 +311,11 @@ const BookingOut: React.FC = () => {
     setEvents([])
     setQuotaByDate({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedObject, selectedTransportType, askonaSupplierId, objects, range.start, range.end, currentView])
+  }, [selectedObject, selectedSupplier, selectedTransportType, objects, range.start, range.end, currentView])
 
   
   const handleSearch = async (rangeOverride?: { start: Date; end: Date }, viewOverride?: View) => {
-    if (!selectedObject || !selectedTransportType) {
+    if (!selectedObject || !selectedSupplier || !selectedTransportType) {
       latestSearchRequestRef.current += 1
       setEvents([])
       setQuotaByDate({})
@@ -194,14 +330,13 @@ const BookingOut: React.FC = () => {
     const from = format(currentRange.start, 'yyyy-MM-dd')
     const to = format(currentRange.end, 'yyyy-MM-dd')
     const cacheBust = Date.now()
-    const supplierQuery = askonaSupplierId ? `&supplier_id=${askonaSupplierId}` : ''
     const selectedObjectData = objects.find(o => o.id === selectedObject)
     const objectCapacityRaw = selectedObjectData?.capacity_out
     const objectCapacity = typeof objectCapacityRaw === 'number' && objectCapacityRaw > 0 ? objectCapacityRaw : null
 
     try {
       const [slotsRes, objectScopeSlotsRes, quotaRes] = await Promise.all([
-        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&transport_type_id=${selectedTransportType}${supplierQuery}&booking_type=out&_=${cacheBust}`),
+        axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&supplier_id=${selectedSupplier}&transport_type_id=${selectedTransportType}&booking_type=out&_=${cacheBust}`),
         axios.get<TimeSlot[]>(`${API_BASE}/api/time-slots?from_date=${from}&to_date=${to}&object_id=${selectedObject}&booking_type=out&_=${cacheBust}`).catch(() => ({ data: [] as TimeSlot[] })),
         axios.get<QuotaAvailability[]>(`${API_BASE}/api/volume-quotas/availability`, {
           params: {
@@ -423,7 +558,7 @@ const BookingOut: React.FC = () => {
   }
 
   const handleBookingSuccess = async () => {
-    if (selectedObject && selectedTransportType) {
+    if (selectedObject && selectedSupplier && selectedTransportType) {
       await handleSearch(range, viewRef.current)
     }
   }
@@ -489,6 +624,45 @@ const BookingOut: React.FC = () => {
   const onViewChange = (v: View) => {
     viewRef.current = v
     setCurrentView(v)
+  }
+
+  const handleSupplierInputChange = (value: string) => {
+    setSupplierSearch(value)
+    setSupplierDropdownOpen(true)
+
+    const normalizedValue = normalizeSearchValue(value)
+    if (!normalizedValue) {
+      setSelectedSupplier(null)
+      return
+    }
+
+    const selected = suppliers.find((supplier) => supplier.id === selectedSupplier)
+    if (selected && normalizeSearchValue(selected.name) === normalizedValue) return
+
+    const exact = suppliers.find((supplier) => normalizeSearchValue(supplier.name) === normalizedValue)
+    setSelectedSupplier(exact ? exact.id : null)
+  }
+
+  const handleSupplierInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (filteredSuppliers.length > 0) handleSupplierSelect(filteredSuppliers[0])
+      return
+    }
+    if (event.key === 'Escape') {
+      setSupplierDropdownOpen(false)
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      setSupplierDropdownOpen(true)
+    }
+  }
+
+  const handleClearSupplier = () => {
+    setSupplierSearch('')
+    setSelectedSupplier(null)
+    setSupplierDropdownOpen(true)
+    localStorage.removeItem('lastSelectedSupplier_BookingOut')
   }
 
   const dayPropGetter = (date: Date) => {
@@ -604,11 +778,103 @@ const BookingOut: React.FC = () => {
             ))}
           </select>
         </div>
+        <div className="field" ref={supplierFieldRef} style={{ position: 'relative' }}>
+          <label>Поставщик</label>
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              value={supplierSearch}
+              onFocus={() => setSupplierDropdownOpen(true)}
+              onChange={(e) => handleSupplierInputChange(e.target.value)}
+              onKeyDown={handleSupplierInputKeyDown}
+              placeholder="Начните вводить поставщика"
+              autoComplete="off"
+              style={{ paddingRight: supplierSearch ? 34 : undefined }}
+            />
+            {supplierSearch && (
+              <button
+                type="button"
+                aria-label="Очистить поставщика"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={handleClearSupplier}
+                style={{
+                  position: 'absolute',
+                  right: 8,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  border: 'none',
+                  background: '#e5e7eb',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  lineHeight: '18px',
+                  padding: 0,
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {supplierDropdownOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                right: 0,
+                marginTop: 6,
+                background: '#fff',
+                border: '1px solid #d1d5db',
+                borderRadius: 10,
+                boxShadow: '0 12px 30px rgba(15, 23, 42, 0.12)',
+                maxHeight: 260,
+                overflowY: 'auto',
+                zIndex: 20,
+              }}
+            >
+              {filteredSuppliers.length === 0 ? (
+                <div style={{ padding: '10px 12px', color: '#6b7280', fontSize: 14 }}>
+                  Ничего не найдено
+                </div>
+              ) : (
+                filteredSuppliers.map((supplier) => (
+                  <button
+                    key={supplier.id}
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleSupplierSelect(supplier)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: 'none',
+                      borderBottom: '1px solid #f3f4f6',
+                      background: supplier.id === selectedSupplier ? '#eff6ff' : '#fff',
+                      color: '#111827',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                    }}
+                  >
+                    {supplier.name}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <div className="field">
           <label>Тип перевозки</label>
-          <select value={selectedTransportType || ''} onChange={(e) => setSelectedTransportType(Number(e.target.value))}>
-            <option value="" disabled>Выберите тип перевозки</option>
-            {transportTypes.map(tt => (
+          <select
+            value={selectedTransportType || ''}
+            onChange={(e) => setSelectedTransportType(Number(e.target.value))}
+            disabled={!selectedSupplier}
+          >
+            <option value="" disabled>{selectedSupplier ? 'Выберите тип перевозки' : 'Сначала выберите поставщика'}</option>
+            {availableTransportTypes.map(tt => (
               <option key={tt.id} value={tt.id}>{tt.name}</option>
             ))}
           </select>
@@ -662,7 +928,7 @@ const BookingOut: React.FC = () => {
         selectedSlot={selectedSlot}
         onBookingSuccess={handleBookingSuccess}
         selectedObject={selectedObject}
-        prefillSupplierId={askonaSupplierId}
+        prefillSupplierId={selectedSupplier}
         prefillTransportTypeId={selectedTransportType}
         bookingType="out"
       />

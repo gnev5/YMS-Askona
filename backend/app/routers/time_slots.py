@@ -199,6 +199,7 @@ def get_time_slots_journal(
     dock_type: Optional[str] = Query(None, description="Тип дока: entrance/exit/universal"),
     start_time_from: Optional[time] = Query(None, description="Время начала слота с (HH:MM)"),
     start_time_to: Optional[time] = Query(None, description="Время начала слота по (HH:MM)"),
+    weekday: Optional[int] = Query(None, ge=0, le=6, description="0=Monday, 6=Sunday"),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin)
 ):
@@ -236,6 +237,8 @@ def get_time_slots_journal(
         query = query.filter(models.TimeSlot.start_time < start_time_to)
     
     slots = query.order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
+    if weekday is not None:
+        slots = [slot for slot in slots if slot.slot_date.weekday() == weekday]
     
     # Подсчитываем занятость для каждого слота
     result = []
