@@ -3,6 +3,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from datetime import date, time
+from io import BytesIO
+
+from openpyxl import load_workbook
 
 from app.db import Base, get_db
 from app import models, schemas # Keep models and schemas imported at module level
@@ -54,6 +57,10 @@ def test_user_fixture(db_session):
 @pytest.fixture(scope="function")
 def test_client(db_session, test_user_fixture):
     """Фикстура для создания тестового клиента с очищенной БД и переопределенными зависимостями"""
+    # app.main creates tables on import using app.db.engine; point it at the test DB.
+    import app.db as app_db
+    app_db.engine = db_session.get_bind()
+
     from app.main import app
 
     app.dependency_overrides[get_db] = lambda: db_session
@@ -291,3 +298,84 @@ def test_create_booking_does_not_fallback_to_dock_from_other_supplier_zone(test_
 
     assert response.status_code == 409
     assert "не найдено доступных временных слотов" in response.json()["detail"].lower()
+
+
+def _create_basic_booking(client, db_session, *, slot_time=time(10, 0), vehicle_plate="CANCEL-1"):
+    test_object = models.Object(name=f"Object {vehicle_plate}", object_type="warehouse", capacity_in=1, capacity_out=1)
+    db_session.add(test_object)
+    db_session.commit()
+
+    test_dock = models.Dock(name=f"Dock {vehicle_plate}", dock_type="entrance", object_id=test_object.id)
+    db_session.add(test_dock)
+    db_session.commit()
+
+    test_vehicle_type = models.VehicleType(name=f"Vehicle {vehicle_plate}", duration_minutes=30)
+    db_session.add(test_vehicle_type)
+    db_session.commit()
+
+    test_slot = models.TimeSlot(
+        dock_id=test_dock.id,
+        slot_date=date.today(),
+        start_time=slot_time,
+        end_time=time(slot_time.hour, slot_time.minute + 30),
+        capacity=1,
+    )
+    db_session.add(test_slot)
+    db_session.commit()
+
+    response = client.post("/api/bookings/", json={
+        "vehicle_type_id": test_vehicle_type.id,
+        "booking_date": str(date.today()),
+        "start_time": slot_time.strftime("%H:%M"),
+        "object_id": test_object.id,
+        "vehicle_plate": vehicle_plate,
+        "driver_full_name": "Cancel Driver",
+        "driver_phone": "12345",
+    })
+    assert response.status_code == 200, response.text
+    return response.json(), test_object, test_slot, test_vehicle_type
+
+
+def test_cancelled_booking_remains_in_my_bookings_and_slot_can_be_rebooked(test_client, db_session):
+    booking, test_object, _test_slot, test_vehicle_type = _create_basic_booking(test_client, db_session)
+
+    cancel_response = test_client.put(f"/api/bookings/{booking['id']}/cancel")
+    assert cancel_response.status_code == 200
+
+    my_response = test_client.get("/api/bookings/my")
+    assert my_response.status_code == 200
+    returned = {item["id"]: item for item in my_response.json()}
+    assert returned[booking["id"]]["status"] == "cancelled"
+    assert returned[booking["id"]]["vehicle_plate"] == "CANCEL-1"
+
+    # Отмененная запись остается в истории, но ее слот не должен блокировать новую бронь.
+    rebook_response = test_client.post("/api/bookings/", json={
+        "vehicle_type_id": test_vehicle_type.id,
+        "booking_date": str(date.today()),
+        "start_time": "10:00",
+        "object_id": test_object.id,
+        "vehicle_plate": "CANCEL-2",
+        "driver_full_name": "Rebook Driver",
+        "driver_phone": "67890",
+    })
+    assert rebook_response.status_code == 200, rebook_response.text
+
+
+def test_cancelled_booking_export_includes_grey_row(test_client, db_session):
+    booking, _test_object, _test_slot, _test_vehicle_type = _create_basic_booking(
+        test_client,
+        db_session,
+        slot_time=time(12, 0),
+        vehicle_plate="EXPORT-CANCEL",
+    )
+    assert test_client.put(f"/api/bookings/{booking['id']}/cancel").status_code == 200
+
+    response = test_client.post("/api/bookings/export/xlsx", json=[booking["id"]])
+    assert response.status_code == 200, response.text
+
+    wb = load_workbook(BytesIO(response.content))
+    ws = wb["bookings"]
+    row = [cell.value for cell in ws[2]]
+    assert row[10] == "cancelled"
+    assert row[12] == booking["id"]
+    assert ws.cell(row=2, column=1).fill.fgColor.rgb == "FFE5E7EB"

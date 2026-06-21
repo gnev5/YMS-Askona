@@ -21,6 +21,7 @@ NOON_MSK = time(15, 0)
 EXPORT_RED_FILL = PatternFill(fill_type="solid", fgColor="FFFEE2E2")
 EXPORT_ORANGE_FILL = PatternFill(fill_type="solid", fgColor="FFFED7AA")
 EXPORT_YELLOW_FILL = PatternFill(fill_type="solid", fgColor="FFFEF9C3")
+EXPORT_GREY_FILL = PatternFill(fill_type="solid", fgColor="FFE5E7EB")
 
 def _dock_matches_supplier_zone(dock: models.Dock, supplier_zone_id: int | None) -> bool:
     if supplier_zone_id is None:
@@ -117,7 +118,9 @@ def _serialize_booking(db: Session, booking: models.Booking, include_user: bool 
 
 
 def _resolve_export_row_fill(serialized: dict) -> PatternFill | None:
-    # Keep same priority as UI: red > orange > yellow.
+    if serialized.get("status") == "cancelled":
+        return EXPORT_GREY_FILL
+    # Keep same priority as UI for active bookings: red > orange > yellow.
     if bool(serialized.get("is_post_factum_msk")):
         return EXPORT_RED_FILL
     if bool(serialized.get("is_created_today_for_today_msk")):
@@ -299,8 +302,11 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                         # Проверим доступность
                         all_available = True
                         for slot in candidate_chain:
-                            current_occupancy = db.query(func.count(models.BookingTimeSlot.id)).filter(
-                                models.BookingTimeSlot.time_slot_id == slot.id
+                            current_occupancy = db.query(func.count(models.BookingTimeSlot.id)).join(
+                                models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id
+                            ).filter(
+                                models.BookingTimeSlot.time_slot_id == slot.id,
+                                models.Booking.status == "confirmed",
                             ).scalar() or 0
                             logging.info(f"Slot {slot.id}: current_occupancy={current_occupancy}, capacity={slot.capacity}")
                             if current_occupancy >= slot.capacity:
@@ -456,8 +462,11 @@ def create_booking(booking: schemas.BookingCreateUpdated, db: Session = Depends(
                     break
 
             # Проверяем занятость слота
-            current_occupancy = db.query(func.count(models.BookingTimeSlot.id)).filter(
-                models.BookingTimeSlot.time_slot_id == slot.id
+            current_occupancy = db.query(func.count(models.BookingTimeSlot.id)).join(
+                models.Booking, models.BookingTimeSlot.booking_id == models.Booking.id
+            ).filter(
+                models.BookingTimeSlot.time_slot_id == slot.id,
+                models.Booking.status == "confirmed",
             ).scalar() or 0
             if current_occupancy >= slot.capacity:
                 logging.info(f"Slot {slot.id} in dock {dock_id} is fully occupied. Dock rejected.")
@@ -561,11 +570,7 @@ def cancel_booking(
     booking.status = "cancelled"
     booking.updated_at = datetime.utcnow()
     
-    # Удаляем связи с временными слотами, чтобы они снова стали доступны
-    db.query(models.BookingTimeSlot).filter(
-        models.BookingTimeSlot.booking_id == booking_id
-    ).delete()
-    
+    # Связи со слотами сохраняем для истории/выгрузок; доступность считает только confirmed.
     db.commit()
     
     return {"message": "Booking cancelled successfully"}
@@ -578,7 +583,7 @@ def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = 
         raise HTTPException(status_code=403, detail="Недостаточно прав")
     
     bookings = db.query(models.Booking).filter(
-        models.Booking.status == "confirmed"
+        models.Booking.status.in_(["confirmed", "cancelled"])
     ).order_by(models.Booking.created_at.desc()).all()
     
     result = []
@@ -597,7 +602,7 @@ def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = 
 def get_my_bookings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Получить все записи (бывшие \"мои\"), видны всем пользователям"""
     bookings = db.query(models.Booking).filter(
-        models.Booking.status == "confirmed"
+        models.Booking.status.in_(["confirmed", "cancelled"])
     ).order_by(models.Booking.created_at.desc()).all()
     
     result = []
@@ -629,7 +634,7 @@ def export_bookings_xlsx(
         db.query(models.Booking)
         .filter(
             models.Booking.id.in_(unique_ids),
-            models.Booking.status == "confirmed",
+            models.Booking.status.in_(["confirmed", "cancelled"]),
         )
         .all()
     )
@@ -695,10 +700,12 @@ def export_bookings_xlsx(
     legend_ws.append(["", "#fee2e2", "постфактум"])
     legend_ws.append(["", "#fed7aa", "сегодня на сегодня"])
     legend_ws.append(["", "#fef9c3", "сегодня после 15:00 на завтра"])
+    legend_ws.append(["", "#e5e7eb", "отменено"])
 
     legend_ws.cell(row=2, column=1).fill = EXPORT_RED_FILL
     legend_ws.cell(row=3, column=1).fill = EXPORT_ORANGE_FILL
     legend_ws.cell(row=4, column=1).fill = EXPORT_YELLOW_FILL
+    legend_ws.cell(row=5, column=1).fill = EXPORT_GREY_FILL
 
     buf = BytesIO()
     wb.save(buf)

@@ -505,6 +505,8 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
   const formatTime = (timeStr: string) => timeStr.slice(0, 5)
 
+  const formatStatus = (status: string) => status === 'cancelled' ? 'Отменено' : status === 'confirmed' ? 'Подтверждено' : status
+
   const getFilenameFromDisposition = (contentDisposition?: string) => {
     if (!contentDisposition) return null
     const utfMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
@@ -972,13 +974,16 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
                   key={b.id}
                   style={{
                     borderBottom: '1px solid #f3f4f6',
-                    backgroundColor: b.is_post_factum_msk
-                      ? '#fee2e2'
-                      : b.is_created_today_for_today_msk
-                        ? '#fed7aa'
-                        : b.is_after_noon_for_next_day_msk
-                          ? '#fef9c3'
-                          : undefined,
+                    backgroundColor: b.status === 'cancelled'
+                      ? '#e5e7eb'
+                      : b.is_post_factum_msk
+                        ? '#fee2e2'
+                        : b.is_created_today_for_today_msk
+                          ? '#fed7aa'
+                          : b.is_after_noon_for_next_day_msk
+                            ? '#fef9c3'
+                            : undefined,
+                    color: b.status === 'cancelled' ? '#6b7280' : undefined,
                   }}
                 >
 
@@ -1002,7 +1007,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
                   <td style={{ padding: 8 }}>{b.transport_sheet || '-'}</td>
 
-                  <td style={{ padding: 8 }}>{b.status}</td>
+                  <td style={{ padding: 8 }}>{formatStatus(b.status)}</td>
 
                   <td style={{ padding: 8 }}>{b.user_full_name || b.user_email || b.user_login || '-'}</td>
 
@@ -1010,7 +1015,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
 
-                      {b.can_modify && (
+                      {b.can_modify && b.status === 'confirmed' && (
 
                         <>
 
