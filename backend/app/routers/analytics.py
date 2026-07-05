@@ -1,7 +1,7 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, cast, Date
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from .. import models
 from ..db import get_db
 from ..deps import get_current_user
@@ -225,6 +225,116 @@ def get_bookings_by_supplier(
         })
 
     return results
+
+
+@router.get("/shift-dynamics")
+def get_shift_dynamics(
+    start_date: date,
+    end_date: date,
+    transport_type_id: int = None,
+    supplier_id: int = None,
+    supplier_ids: list[int] | None = Query(default=None),
+    object_id: int = None,
+    dock_type: str = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Динамика записей и кубов по дневной и ночной сменам.
+
+    Смена 1 относится к дате N и длится с N 08:00 до N 20:00.
+    Смена 2 относится к дате N и длится с N 20:00 до N+1 08:00.
+    Запись распределяется по смене по плановому времени начала бронирования
+    (самый ранний старт слота среди слотов, попавших в выбранные фильтры).
+    """
+    if current_user.role != models.UserRole.admin:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
+
+    query = (
+        db.query(
+            models.Booking.id.label("booking_id"),
+            models.Booking.cubes.label("cubes"),
+            models.TimeSlot.slot_date.label("slot_date"),
+            models.TimeSlot.start_time.label("start_time"),
+        )
+        .join(models.BookingTimeSlot, models.BookingTimeSlot.booking_id == models.Booking.id)
+        .join(models.TimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id)
+        .join(models.Dock, models.Dock.id == models.TimeSlot.dock_id)
+        .filter(
+            models.TimeSlot.slot_date >= start_date,
+            models.TimeSlot.slot_date <= end_date + timedelta(days=1),
+            models.Booking.status != "cancelled",
+        )
+    )
+
+    if transport_type_id is not None:
+        query = query.filter(models.Booking.transport_type_id == transport_type_id)
+    if supplier_ids:
+        query = query.filter(models.Booking.supplier_id.in_(supplier_ids))
+    elif supplier_id is not None:
+        query = query.filter(models.Booking.supplier_id == supplier_id)
+    if object_id is not None:
+        query = query.filter(models.Dock.object_id == object_id)
+    if dock_type is not None:
+        try:
+            dock_type_enum = models.DockType(dock_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid dock_type")
+        query = query.filter(models.Dock.dock_type == dock_type_enum)
+
+    bookings_by_id: dict[int, dict[str, datetime | float]] = {}
+    for row in query.all():
+        planned_start = datetime.combine(row.slot_date, row.start_time)
+        cubes = float(row.cubes) if row.cubes is not None else 0.0
+        current = bookings_by_id.get(row.booking_id)
+        if current is None or planned_start < current["planned_start"]:
+            bookings_by_id[row.booking_id] = {
+                "planned_start": planned_start,
+                "cubes": cubes,
+            }
+
+    def empty_shift(label: str, start: str, end: str) -> dict[str, str | int | float]:
+        return {
+            "label": label,
+            "start_time": start,
+            "end_time": end,
+            "count": 0,
+            "cubes": 0.0,
+        }
+
+    results_by_date: dict[date, dict[str, object]] = {}
+    current_date = start_date
+    while current_date <= end_date:
+        results_by_date[current_date] = {
+            "shift_date": current_date.isoformat(),
+            "shift_1": empty_shift("Смена 1", "08:00", "20:00"),
+            "shift_2": empty_shift("Смена 2", "20:00", "08:00"),
+        }
+        current_date += timedelta(days=1)
+
+    for item in bookings_by_id.values():
+        planned_start = item["planned_start"]
+        planned_time = planned_start.time()
+
+        if time(8, 0) <= planned_time < time(20, 0):
+            shift_date = planned_start.date()
+            shift_key = "shift_1"
+        elif planned_time >= time(20, 0):
+            shift_date = planned_start.date()
+            shift_key = "shift_2"
+        else:
+            shift_date = planned_start.date() - timedelta(days=1)
+            shift_key = "shift_2"
+
+        if shift_date < start_date or shift_date > end_date:
+            continue
+
+        shift_bucket = results_by_date[shift_date][shift_key]
+        shift_bucket["count"] += 1
+        shift_bucket["cubes"] += float(item["cubes"])
+
+    return [results_by_date[item_date] for item_date in sorted(results_by_date)]
 
 
 @router.get("/bookings-by-hour")
