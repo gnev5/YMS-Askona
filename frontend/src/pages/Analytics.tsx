@@ -124,6 +124,20 @@ interface BookingsByHour {
   occupied_cubes: number;
 }
 
+interface ShiftBucket {
+  label: string;
+  start_time: string;
+  end_time: string;
+  count: number;
+  cubes: number;
+}
+
+interface ShiftDynamics {
+  shift_date: string;
+  shift_1: ShiftBucket;
+  shift_2: ShiftBucket;
+}
+
 interface TransportType {
   id: number;
   name: string;
@@ -153,6 +167,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
   const [bookingsByZone, setBookingsByZone] = useState<BookingsByZone[]>([]);
   const [bookingsBySupplier, setBookingsBySupplier] = useState<BookingsBySupplier[]>([]);
   const [bookingsByHour, setBookingsByHour] = useState<BookingsByHour[]>([]);
+  const [shiftDynamics, setShiftDynamics] = useState<ShiftDynamics[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -333,7 +348,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
         params.dock_type = selectedDockType;
       }
       
-      const [bookingsByDayResponse, bookingsByZoneResponse, bookingsBySupplierResponse, bookingsByHourResponse] = await Promise.all([
+      const [bookingsByDayResponse, bookingsByZoneResponse, bookingsBySupplierResponse, bookingsByHourResponse, bookingsByShiftResponse] = await Promise.all([
         axios.get(
           `${API_BASE}/api/analytics/bookings-by-day`,
           { headers, params, paramsSerializer: serializeParams }
@@ -350,11 +365,16 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
           `${API_BASE}/api/analytics/bookings-by-hour`,
           { headers, params, paramsSerializer: serializeParams }
         ),
+        axios.get(
+          `${API_BASE}/api/analytics/shift-dynamics`,
+          { headers, params, paramsSerializer: serializeParams }
+        ),
       ]);
       setBookingsByDay(bookingsByDayResponse.data);
       setBookingsByZone(bookingsByZoneResponse.data);
       setBookingsBySupplier(bookingsBySupplierResponse.data);
       setBookingsByHour(bookingsByHourResponse.data);
+      setShiftDynamics(bookingsByShiftResponse.data);
     } catch (err: any) {
       console.error('Error fetching analytics data:', err);
       setError(err?.response?.data?.detail || 'Ошибка загрузки данных');
@@ -390,6 +410,50 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
         data: bookingsByDay.map((item) => item.cubes),
         backgroundColor: 'rgba(75, 192, 192, 0.6)',
         borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const shiftLabels = shiftDynamics.map((item) =>
+    format(parseISO(item.shift_date), 'dd MMM', { locale: ru })
+  );
+
+  const shiftBookingsChartData = {
+    labels: shiftLabels,
+    datasets: [
+      {
+        label: 'Смена 1 (08:00–20:00)',
+        data: shiftDynamics.map((item) => item.shift_1.count),
+        backgroundColor: 'rgba(37, 99, 235, 0.65)',
+        borderColor: 'rgba(37, 99, 235, 1)',
+        borderWidth: 1,
+      },
+      {
+        label: 'Смена 2 (20:00–08:00)',
+        data: shiftDynamics.map((item) => item.shift_2.count),
+        backgroundColor: 'rgba(124, 58, 237, 0.65)',
+        borderColor: 'rgba(124, 58, 237, 1)',
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const shiftCubesChartData = {
+    labels: shiftLabels,
+    datasets: [
+      {
+        label: 'Смена 1 (08:00–20:00)',
+        data: shiftDynamics.map((item) => item.shift_1.cubes),
+        backgroundColor: 'rgba(5, 150, 105, 0.65)',
+        borderColor: 'rgba(5, 150, 105, 1)',
+        borderWidth: 1,
+      },
+      {
+        label: 'Смена 2 (20:00–08:00)',
+        data: shiftDynamics.map((item) => item.shift_2.cubes),
+        backgroundColor: 'rgba(245, 158, 11, 0.65)',
+        borderColor: 'rgba(245, 158, 11, 1)',
         borderWidth: 1,
       },
     ],
@@ -488,6 +552,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
 
   const baseBookingsByDay = bookingsByDay.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
   const baseCubesByDay = bookingsByDay.reduce((sum, item) => sum + (Number(item.cubes) || 0), 0);
+  const baseShift1Bookings = shiftDynamics.reduce((sum, item) => sum + (Number(item.shift_1.count) || 0), 0);
+  const baseShift2Bookings = shiftDynamics.reduce((sum, item) => sum + (Number(item.shift_2.count) || 0), 0);
+  const baseShift1Cubes = shiftDynamics.reduce((sum, item) => sum + (Number(item.shift_1.cubes) || 0), 0);
+  const baseShift2Cubes = shiftDynamics.reduce((sum, item) => sum + (Number(item.shift_2.cubes) || 0), 0);
   const baseBookingsByStartHour = bookingsByHour.reduce((sum, item) => sum + (Number(item.start_count) || 0), 0);
   const baseCubesByStartHour = bookingsByHour.reduce((sum, item) => sum + (Number(item.start_cubes) || 0), 0);
   const baseBookingsByOccupiedHours = bookingsBySupplier.reduce((sum, item) => sum + (Number(item.booking_count) || 0), 0);
@@ -772,6 +840,30 @@ const Analytics: React.FC<AnalyticsProps> = ({ onBack }) => {
             <h2>Количество кубов по дням (база: {formatCubeBase(baseCubesByDay)} куб.)</h2>
             {typeof window !== 'undefined' && window.Chart ? (
               <Bar data={cubesChartData} options={chartOptions} />
+            ) : (
+              <div>Загрузка графика...</div>
+            )}
+          </div>
+          </div>
+
+          <div className="chart-row">
+            <div className="chart-container">
+            <h2>
+              Динамика записей по сменам (смена 1: {formatCountBase(baseShift1Bookings)}, смена 2: {formatCountBase(baseShift2Bookings)})
+            </h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              <Bar data={shiftBookingsChartData} options={chartOptions} />
+            ) : (
+              <div>Загрузка графика...</div>
+            )}
+          </div>
+
+          <div className="chart-container">
+            <h2>
+              Динамика кубов по сменам (смена 1: {formatCubeBase(baseShift1Cubes)} куб., смена 2: {formatCubeBase(baseShift2Cubes)} куб.)
+            </h2>
+            {typeof window !== 'undefined' && window.Chart ? (
+              <Bar data={shiftCubesChartData} options={chartOptions} />
             ) : (
               <div>Загрузка графика...</div>
             )}
