@@ -22,6 +22,7 @@ import BookingOut from './pages/BookingOut'
 import AdminPrrLimits from './pages/AdminPrrLimits'
 import AdminBackups from './pages/AdminBackups'
 import AdminVolumeQuotas from './pages/AdminVolumeQuotas'
+import DataComparisons from './pages/DataComparisons'
 
 type Page =
   | 'admin-schedule'
@@ -39,6 +40,7 @@ type Page =
   | 'admin-objects'
   | 'admin-prr-limits'
   | 'admin-volume-quotas'
+  | 'data-comparisons'
   | 'admin-backups'
 
 const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, children?: {id: Page, label: string}[] }[] = [
@@ -53,6 +55,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: string; admin?: boolean, child
     ],
   },
   { id: 'analytics', label: 'Аналитика', icon: 'analytics', admin: true },
+  { id: 'data-comparisons', label: 'Сверка данных', icon: 'compare_arrows', admin: true },
   { id: 'admin-schedule', label: 'График работы', icon: 'schedule', admin: true },
   { id: 'admin-docks', label: 'Доки', icon: 'door_sliding', admin: true },
   { id: 'admin-objects', label: 'Объекты', icon: 'apartment', admin: true },
@@ -630,6 +633,8 @@ const App: React.FC = () => {
         return <AdminBackups onBack={() => setPage('my-bookings')} />
       case 'analytics':
         return <Analytics onBack={() => setPage('my-bookings')} />
+      case 'data-comparisons':
+        return <DataComparisons onBack={() => setPage('my-bookings')} />
       case 'booking-in':
         return <BookingIn />
       case 'booking-out':

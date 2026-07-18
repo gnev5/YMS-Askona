@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .db import engine, Base
-from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics, objects, prr_limits, backups, volume_quotas
+from .routers import docks, vehicle_types, auth, work_schedules, time_slots, bookings, transport_types, zones, suppliers, analytics, objects, prr_limits, backups, volume_quotas, data_comparisons
 
 import logging
 
@@ -63,4 +63,5 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"]
 app.include_router(objects.router, prefix="/api/objects", tags=["objects"])
 app.include_router(prr_limits.router, prefix="/api/prr-limits", tags=["prr_limits"])
 app.include_router(volume_quotas.router, prefix="/api/volume-quotas", tags=["volume_quotas"])
+app.include_router(data_comparisons.router, prefix="/api/data-comparisons", tags=["data_comparisons"])
 app.include_router(backups.router)

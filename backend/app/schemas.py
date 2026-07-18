@@ -475,3 +475,16 @@ class BookingImportError(BaseModel):
 class BookingImportResult(BaseModel):
     created: int
     errors: List[BookingImportError] = []
+
+
+# Data comparison schemas
+class DataComparisonProfileCreate(BaseModel):
+    name: str
+    object_id: int
+    direction: str
+    tl_column_name: str = "Номер ТЛ"
+    status_filters: List[str] = ["confirmed"]
+    yms_filters: dict = {}
+    file_settings: dict = {}
+    comparison_settings: dict = {}
+    is_active: bool = True

@@ -1,5 +1,5 @@
 from datetime import datetime, time, date
-from sqlalchemy import Integer, String, Boolean, DateTime, ForeignKey, Enum, Time, UniqueConstraint, Date, Table, Float, Text, Column
+from sqlalchemy import Integer, String, Boolean, DateTime, ForeignKey, Enum, Time, UniqueConstraint, Date, Table, Float, Text, Column, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 import enum
@@ -391,3 +391,74 @@ class VolumeQuotaOverride(Base):
     __table_args__ = (
         UniqueConstraint("quota_id", "override_date", name="uq_quota_override_date"),
     )
+
+
+class DataComparisonProfile(Base):
+    __tablename__ = "data_comparison_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)
+    object_id: Mapped[int] = mapped_column(ForeignKey("objects.id"), nullable=False, index=True)
+    direction: Mapped[BookingDirection] = mapped_column(
+        Enum(
+            BookingDirection,
+            values_callable=lambda enum: [e.value for e in enum],
+            name="bookingdirection",
+        ),
+        nullable=False,
+        index=True,
+    )
+    tl_column_name: Mapped[str] = mapped_column(String(100), nullable=False, default="Номер ТЛ")
+    status_filters: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=lambda: ["confirmed"])
+    yms_filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    file_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    comparison_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    object: Mapped["Object"] = relationship("Object")
+    runs: Mapped[list["DataComparisonRun"]] = relationship("DataComparisonRun", back_populates="profile")
+
+
+class DataComparisonRun(Base):
+    __tablename__ = "data_comparison_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("data_comparison_profiles.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    date_from: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    date_to: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    extended_date_from: Mapped[date] = mapped_column(Date, nullable=False)
+    extended_date_to: Mapped[date] = mapped_column(Date, nullable=False)
+    source_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="completed", index=True)
+    summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    profile: Mapped["DataComparisonProfile"] = relationship("DataComparisonProfile", back_populates="runs")
+    user: Mapped["User"] = relationship("User")
+    rows: Mapped[list["DataComparisonRunRow"]] = relationship(
+        "DataComparisonRunRow", back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class DataComparisonRunRow(Base):
+    __tablename__ = "data_comparison_run_rows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("data_comparison_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    tl_number_original: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tl_number_normalized: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    file_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    booking_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    yms_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    differences: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    run: Mapped["DataComparisonRun"] = relationship("DataComparisonRun", back_populates="rows")

@@ -1,0 +1,317 @@
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
+from io import BytesIO
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from openpyxl import load_workbook
+from sqlalchemy import and_
+from sqlalchemy.orm import Session, joinedload
+
+from .. import models, schemas
+from ..db import get_db
+from ..deps import get_current_user
+from .bookings import _serialize_booking
+
+router = APIRouter()
+
+
+def _require_admin(user: models.User) -> None:
+    if user.role != models.UserRole.admin:
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+
+def normalize_tl_number(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().upper()
+
+
+def _profile_to_dict(profile: models.DataComparisonProfile) -> dict:
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "object_id": profile.object_id,
+        "object_name": profile.object.name if profile.object else None,
+        "direction": profile.direction.value if hasattr(profile.direction, "value") else profile.direction,
+        "tl_column_name": profile.tl_column_name,
+        "status_filters": profile.status_filters or [],
+        "yms_filters": profile.yms_filters or {},
+        "file_settings": profile.file_settings or {},
+        "comparison_settings": profile.comparison_settings or {},
+        "is_active": profile.is_active,
+        "created_at": profile.created_at.isoformat() if profile.created_at else None,
+        "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
+    }
+
+
+def _row_to_dict(row: models.DataComparisonRunRow) -> dict:
+    return {
+        "id": row.id,
+        "run_id": row.run_id,
+        "tl_number_original": row.tl_number_original,
+        "tl_number_normalized": row.tl_number_normalized,
+        "status": row.status,
+        "file_row_number": row.file_row_number,
+        "booking_id": row.booking_id,
+        "file_data": row.file_data,
+        "yms_data": row.yms_data,
+        "differences": row.differences or [],
+    }
+
+
+def _run_to_dict(run: models.DataComparisonRun, include_rows: bool = False) -> dict:
+    payload = {
+        "id": run.id,
+        "profile_id": run.profile_id,
+        "profile_name": run.profile.name if run.profile else None,
+        "user_id": run.user_id,
+        "date_from": run.date_from.isoformat(),
+        "date_to": run.date_to.isoformat(),
+        "extended_date_from": run.extended_date_from.isoformat(),
+        "extended_date_to": run.extended_date_to.isoformat(),
+        "source_file_name": run.source_file_name,
+        "status": run.status,
+        "summary": run.summary or {},
+        "error_message": run.error_message,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+    }
+    if include_rows:
+        payload["rows"] = [_row_to_dict(row) for row in run.rows]
+    return payload
+
+
+def _parse_xlsx_rows(content: bytes, tl_column_name: str) -> list[dict]:
+    wb = load_workbook(BytesIO(content), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+    headers = [str(cell).strip() if cell is not None else "" for cell in rows[0]]
+    if tl_column_name not in headers:
+        raise HTTPException(status_code=400, detail=f"В файле не найдена колонка '{tl_column_name}'")
+    parsed = []
+    for idx, values in enumerate(rows[1:], start=2):
+        data = {headers[col_idx]: values[col_idx] if col_idx < len(values) else None for col_idx in range(len(headers)) if headers[col_idx]}
+        tl_original = data.get(tl_column_name)
+        tl_normalized = normalize_tl_number(tl_original)
+        if not tl_normalized:
+            continue
+        parsed.append({
+            "row_number": idx,
+            "tl_original": str(tl_original).strip() if tl_original is not None else "",
+            "tl_normalized": tl_normalized,
+            "data": data,
+        })
+    return parsed
+
+
+def _booking_query(db: Session, profile: models.DataComparisonProfile, start_date: date, end_date: date):
+    statuses = profile.status_filters or ["confirmed"]
+    direction_value = profile.direction.value if hasattr(profile.direction, "value") else profile.direction
+    bookings = (
+        db.query(models.Booking)
+        .join(models.BookingTimeSlot, models.Booking.id == models.BookingTimeSlot.booking_id)
+        .join(models.TimeSlot, models.BookingTimeSlot.time_slot_id == models.TimeSlot.id)
+        .join(models.Dock, models.TimeSlot.dock_id == models.Dock.id)
+        .options(
+            joinedload(models.Booking.user),
+            joinedload(models.Booking.vehicle_type),
+            joinedload(models.Booking.supplier),
+            joinedload(models.Booking.zone),
+            joinedload(models.Booking.transport_type),
+        )
+        .filter(
+            models.Dock.object_id == profile.object_id,
+            models.Booking.booking_type == models.BookingDirection(direction_value),
+            models.Booking.status.in_(statuses),
+            models.TimeSlot.slot_date >= start_date,
+            models.TimeSlot.slot_date <= end_date,
+        )
+        .all()
+    )
+    deduped = {}
+    for booking in bookings:
+        deduped[booking.id] = booking
+    return list(deduped.values())
+
+
+def _index_bookings(db: Session, bookings: list[models.Booking]) -> dict[str, list[dict]]:
+    by_tl: dict[str, list[dict]] = defaultdict(list)
+    for booking in bookings:
+        normalized = normalize_tl_number(booking.transport_sheet)
+        if not normalized:
+            continue
+        serialized = _serialize_booking(db, booking, include_user=True)
+        if serialized:
+            by_tl[normalized].append(serialized)
+    return by_tl
+
+
+@router.get("/profiles")
+def list_profiles(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_admin(current_user)
+    profiles = db.query(models.DataComparisonProfile).options(joinedload(models.DataComparisonProfile.object)).order_by(models.DataComparisonProfile.name).all()
+    return [_profile_to_dict(profile) for profile in profiles]
+
+
+@router.post("/profiles")
+def create_profile(payload: schemas.DataComparisonProfileCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_admin(current_user)
+    obj = db.query(models.Object).filter(models.Object.id == payload.object_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Object not found")
+    try:
+        direction = models.BookingDirection(payload.direction)
+    except Exception:
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+    profile = models.DataComparisonProfile(
+        name=payload.name,
+        object_id=payload.object_id,
+        direction=direction,
+        tl_column_name=payload.tl_column_name,
+        status_filters=payload.status_filters or ["confirmed"],
+        yms_filters=payload.yms_filters or {},
+        file_settings=payload.file_settings or {},
+        comparison_settings=payload.comparison_settings or {},
+        is_active=payload.is_active,
+    )
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return _profile_to_dict(profile)
+
+
+@router.post("/runs")
+async def create_run(
+    profile_id: int = Form(...),
+    date_from: date = Form(...),
+    date_to: date = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="Дата с не может быть позже даты по")
+    profile = db.query(models.DataComparisonProfile).filter(models.DataComparisonProfile.id == profile_id, models.DataComparisonProfile.is_active == True).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Профиль сверки не найден")
+    content = await file.read()
+    file_rows = _parse_xlsx_rows(content, profile.tl_column_name)
+    extended_from = date_from - timedelta(days=2)
+    extended_to = date_to + timedelta(days=2)
+
+    primary_bookings = _booking_query(db, profile, date_from, date_to)
+    extended_bookings = _booking_query(db, profile, extended_from, extended_to)
+    primary_by_tl = _index_bookings(db, primary_bookings)
+    extended_by_tl = _index_bookings(db, extended_bookings)
+
+    run = models.DataComparisonRun(
+        profile_id=profile.id,
+        user_id=current_user.id,
+        date_from=date_from,
+        date_to=date_to,
+        extended_date_from=extended_from,
+        extended_date_to=extended_to,
+        source_file_name=file.filename or "uploaded.xlsx",
+        status="completed",
+        started_at=datetime.utcnow(),
+        finished_at=datetime.utcnow(),
+        summary={},
+    )
+    db.add(run)
+    db.flush()
+
+    summary = {
+        "file_rows": len(file_rows),
+        "unique_file_tl": len({row["tl_normalized"] for row in file_rows}),
+        "yms_rows": sum(len(v) for v in primary_by_tl.values()),
+        "matched": 0,
+        "found_in_yms_extended_period": 0,
+        "missing_in_yms": 0,
+        "missing_in_file": 0,
+        "duplicate_in_file": 0,
+        "duplicate_in_yms": 0,
+    }
+    rows_to_save = []
+    file_counts = Counter(row["tl_normalized"] for row in file_rows)
+    duplicate_file_tl = {tl for tl, count in file_counts.items() if count > 1}
+    seen_file_tl = set()
+
+    for file_row in file_rows:
+        tl = file_row["tl_normalized"]
+        seen_file_tl.add(tl)
+        if tl in duplicate_file_tl:
+            status = "duplicate_in_file"
+            yms_data = None
+            booking_id = None
+        elif len(primary_by_tl.get(tl, [])) > 1:
+            status = "duplicate_in_yms"
+            yms_data = primary_by_tl[tl]
+            booking_id = None
+        elif primary_by_tl.get(tl):
+            status = "matched"
+            yms_data = primary_by_tl[tl][0]
+            booking_id = yms_data.get("id")
+        elif extended_by_tl.get(tl):
+            status = "found_in_yms_extended_period"
+            yms_data = extended_by_tl[tl][0] if len(extended_by_tl[tl]) == 1 else extended_by_tl[tl]
+            booking_id = yms_data.get("id") if isinstance(yms_data, dict) else None
+        else:
+            status = "missing_in_yms"
+            yms_data = None
+            booking_id = None
+        summary[status] += 1
+        rows_to_save.append(models.DataComparisonRunRow(
+            run_id=run.id,
+            tl_number_original=file_row["tl_original"],
+            tl_number_normalized=tl,
+            status=status,
+            file_row_number=file_row["row_number"],
+            booking_id=booking_id,
+            file_data=file_row["data"],
+            yms_data=yms_data,
+            differences=[],
+        ))
+
+    for tl, bookings in primary_by_tl.items():
+        if tl in seen_file_tl:
+            continue
+        status = "duplicate_in_yms" if len(bookings) > 1 else "missing_in_file"
+        summary[status] += 1
+        rows_to_save.append(models.DataComparisonRunRow(
+            run_id=run.id,
+            tl_number_original=bookings[0].get("transport_sheet") or tl,
+            tl_number_normalized=tl,
+            status=status,
+            file_row_number=None,
+            booking_id=bookings[0].get("id") if len(bookings) == 1 else None,
+            file_data=None,
+            yms_data=bookings if len(bookings) > 1 else bookings[0],
+            differences=[],
+        ))
+
+    run.summary = summary
+    db.add_all(rows_to_save)
+    db.commit()
+    db.refresh(run)
+    return _run_to_dict(run, include_rows=True)
+
+
+@router.get("/runs")
+def list_runs(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_admin(current_user)
+    runs = db.query(models.DataComparisonRun).options(joinedload(models.DataComparisonRun.profile)).order_by(models.DataComparisonRun.created_at.desc()).all()
+    return [_run_to_dict(run) for run in runs]
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_admin(current_user)
+    run = db.query(models.DataComparisonRun).options(joinedload(models.DataComparisonRun.profile), joinedload(models.DataComparisonRun.rows)).filter(models.DataComparisonRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Сверка не найдена")
+    return _run_to_dict(run, include_rows=True)
