@@ -13,6 +13,12 @@ type Profile = {
   is_active: boolean
 }
 
+type YmsObject = {
+  id: number
+  name: string
+  object_type?: string
+}
+
 type RunRow = {
   id: number
   tl_number_original?: string | null
@@ -80,6 +86,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const token = useMemo(() => localStorage.getItem('token'), [])
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [objects, setObjects] = useState<YmsObject[]>([])
   const [runs, setRuns] = useState<ComparisonRun[]>([])
   const [selectedRun, setSelectedRun] = useState<ComparisonRun | null>(null)
   const [profileId, setProfileId] = useState('')
@@ -90,6 +97,11 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
+  const [profileName, setProfileName] = useState('')
+  const [profileObjectId, setProfileObjectId] = useState('')
+  const [profileDirection, setProfileDirection] = useState<'in' | 'out'>('in')
+  const [tlColumnName, setTlColumnName] = useState('Номер ТЛ')
+  const [statusFiltersText, setStatusFiltersText] = useState('confirmed')
 
   const loadProfiles = async () => {
     const { data } = await axios.get<Profile[]>(`${API_BASE}/api/data-comparisons/profiles`, { headers })
@@ -102,11 +114,17 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
     setRuns(data)
   }
 
+  const loadObjects = async () => {
+    const { data } = await axios.get<YmsObject[]>(`${API_BASE}/api/objects`, { headers })
+    setObjects(data)
+    if (!profileObjectId && data.length > 0) setProfileObjectId(String(data[0].id))
+  }
+
   const loadInitial = async () => {
     setLoading(true)
     setError(null)
     try {
-      await Promise.all([loadProfiles(), loadRuns()])
+      await Promise.all([loadProfiles(), loadRuns(), loadObjects()])
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || 'Ошибка загрузки модуля сверок')
     } finally {
@@ -118,6 +136,42 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
     loadInitial()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const submitProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!profileName.trim() || !profileObjectId || !tlColumnName.trim()) {
+      setError('Заполните название профиля, объект и название колонки с номером ТЛ')
+      return
+    }
+    setLoading(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const statusFilters = statusFiltersText
+        .split(',')
+        .map(status => status.trim())
+        .filter(Boolean)
+      const { data } = await axios.post<Profile>(`${API_BASE}/api/data-comparisons/profiles`, {
+        name: profileName.trim(),
+        object_id: Number(profileObjectId),
+        direction: profileDirection,
+        tl_column_name: tlColumnName.trim(),
+        status_filters: statusFilters.length > 0 ? statusFilters : ['confirmed'],
+        yms_filters: {},
+        file_settings: {},
+        comparison_settings: {},
+        is_active: true,
+      }, { headers })
+      setSuccess('Профиль сверки создан')
+      setProfileId(String(data.id))
+      setProfileName('')
+      await loadProfiles()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || e.message || 'Ошибка создания профиля сверки')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const submitRun = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -174,6 +228,41 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
       {error && <div className="error">{error}</div>}
       {success && <div className="success">{success}</div>}
+
+      <section className="card">
+        <h2>Создать профиль сверки</h2>
+        <p className="muted">Профиль создаётся один раз для конкретного РЦ/объекта и направления. Здесь же задаётся название колонки с номером ТЛ в Excel.</p>
+        <form onSubmit={submitProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 2fr 2fr auto', gap: 12, alignItems: 'end' }}>
+          <label>
+            Название профиля
+            <input value={profileName} onChange={e => setProfileName(e.target.value)} placeholder="РЦ Краснодар — Вход" />
+          </label>
+          <label>
+            Объект / РЦ
+            <select value={profileObjectId} onChange={e => setProfileObjectId(e.target.value)}>
+              {objects.map(object => (
+                <option key={object.id} value={object.id}>{object.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Направление
+            <select value={profileDirection} onChange={e => setProfileDirection(e.target.value as 'in' | 'out')}>
+              <option value="in">Вход</option>
+              <option value="out">Выход</option>
+            </select>
+          </label>
+          <label>
+            Название колонки с номером ТЛ
+            <input value={tlColumnName} onChange={e => setTlColumnName(e.target.value)} placeholder="Номер ТЛ" />
+          </label>
+          <label>
+            Статусы YMS через запятую
+            <input value={statusFiltersText} onChange={e => setStatusFiltersText(e.target.value)} placeholder="confirmed" />
+          </label>
+          <button disabled={loading}>{loading ? '...' : 'Создать'}</button>
+        </form>
+      </section>
 
       <section className="card">
         <h2>Новая сверка</h2>

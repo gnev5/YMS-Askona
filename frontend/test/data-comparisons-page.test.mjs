@@ -15,4 +15,8 @@ assert.ok(page.includes('/api/data-comparisons/runs'), 'Page should create/list 
 assert.ok(page.includes('Дата с'), 'Page should let user choose only date_from')
 assert.ok(page.includes('Дата по'), 'Page should let user choose only date_to')
 assert.ok(page.includes('Профиль сверки'), 'Page should require profile selection')
+assert.ok(page.includes('Создать профиль сверки'), 'Page should include profile creation form')
+assert.ok(page.includes('/api/objects'), 'Page should load objects so users do not enter object_id blindly')
+assert.ok(page.includes('Название колонки с номером ТЛ'), 'Profile form should configure TL column name')
+assert.ok(page.includes('/api/data-comparisons/profiles'), 'Profile form should save profiles via API')
 assert.ok(page.includes('found_in_yms_extended_period'), 'Page should show ±2 days diagnostic status')
