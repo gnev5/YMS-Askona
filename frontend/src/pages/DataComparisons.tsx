@@ -9,6 +9,9 @@ type Profile = {
   object_name?: string | null
   direction: 'in' | 'out'
   tl_column_name: string
+  tl_column_letter?: string | null
+  file_start_row: number
+  file_end_row?: number | null
   status_filters: string[]
   is_active: boolean
 }
@@ -100,7 +103,9 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [profileName, setProfileName] = useState('')
   const [profileObjectId, setProfileObjectId] = useState('')
   const [profileDirection, setProfileDirection] = useState<'in' | 'out'>('in')
-  const [tlColumnName, setTlColumnName] = useState('Номер ТЛ')
+  const [tlColumnLetter, setTlColumnLetter] = useState('G')
+  const [fileStartRow, setFileStartRow] = useState('2')
+  const [fileEndRow, setFileEndRow] = useState('')
   const [statusFiltersText, setStatusFiltersText] = useState('confirmed')
 
   const loadProfiles = async () => {
@@ -139,8 +144,14 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   const submitProfile = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!profileName.trim() || !profileObjectId || !tlColumnName.trim()) {
-      setError('Заполните название профиля, объект и название колонки с номером ТЛ')
+    const startRow = Number(fileStartRow)
+    const endRow = fileEndRow ? Number(fileEndRow) : null
+    if (!profileName.trim() || !profileObjectId || !tlColumnLetter.trim()) {
+      setError('Заполните название профиля, объект и столбец с номером ТЛ')
+      return
+    }
+    if (!Number.isInteger(startRow) || startRow < 1 || (endRow !== null && (!Number.isInteger(endRow) || endRow < startRow))) {
+      setError('Проверьте строки начала и окончания: окончание не может быть меньше начала')
       return
     }
     setLoading(true)
@@ -155,7 +166,10 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
         name: profileName.trim(),
         object_id: Number(profileObjectId),
         direction: profileDirection,
-        tl_column_name: tlColumnName.trim(),
+        tl_column_name: 'Номер ТЛ',
+        tl_column_letter: tlColumnLetter.trim().toUpperCase(),
+        file_start_row: startRow,
+        file_end_row: endRow,
         status_filters: statusFilters.length > 0 ? statusFilters : ['confirmed'],
         yms_filters: {},
         file_settings: {},
@@ -165,6 +179,9 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       setSuccess('Профиль сверки создан')
       setProfileId(String(data.id))
       setProfileName('')
+      setTlColumnLetter('G')
+      setFileStartRow('2')
+      setFileEndRow('')
       await loadProfiles()
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || 'Ошибка создания профиля сверки')
@@ -231,8 +248,8 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
       <section className="card">
         <h2>Создать профиль сверки</h2>
-        <p className="muted">Профиль создаётся один раз для конкретного РЦ/объекта и направления. Здесь же задаётся название колонки с номером ТЛ в Excel.</p>
-        <form onSubmit={submitProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 2fr 2fr auto', gap: 12, alignItems: 'end' }}>
+        <p className="muted">Профиль создаётся один раз для конкретного РЦ/объекта и направления. Здесь задаются столбец Excel с номером ТЛ и диапазон строк файла.</p>
+        <form onSubmit={submitProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr 2fr auto', gap: 12, alignItems: 'end' }}>
           <label>
             Название профиля
             <input value={profileName} onChange={e => setProfileName(e.target.value)} placeholder="РЦ Краснодар — Вход" />
@@ -253,8 +270,16 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             </select>
           </label>
           <label>
-            Название колонки с номером ТЛ
-            <input value={tlColumnName} onChange={e => setTlColumnName(e.target.value)} placeholder="Номер ТЛ" />
+            Столбец с номером ТЛ
+            <input value={tlColumnLetter} onChange={e => setTlColumnLetter(e.target.value.toUpperCase())} placeholder="G" maxLength={3} />
+          </label>
+          <label>
+            Строка начала
+            <input type="number" min="1" value={fileStartRow} onChange={e => setFileStartRow(e.target.value)} placeholder="2" />
+          </label>
+          <label>
+            Строка окончания
+            <input type="number" min="1" value={fileEndRow} onChange={e => setFileEndRow(e.target.value)} placeholder="пусто = до конца" />
           </label>
           <label>
             Статусы YMS через запятую

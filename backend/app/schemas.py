@@ -483,6 +483,9 @@ class DataComparisonProfileCreate(BaseModel):
     object_id: int
     direction: str
     tl_column_name: str = "Номер ТЛ"
+    tl_column_letter: Optional[str] = None
+    file_start_row: int = 2
+    file_end_row: Optional[int] = None
     status_filters: List[str] = ["confirmed"]
     yms_filters: dict = {}
     file_settings: dict = {}

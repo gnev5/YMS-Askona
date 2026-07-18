@@ -79,6 +79,20 @@ def _xlsx_with_tl_numbers(*tl_numbers: str) -> BytesIO:
     return buf
 
 
+def _xlsx_with_tl_in_column_g() -> BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["header"])
+    ws.append(["skip-before-range", None, None, None, None, None, "TL-SKIP-BEFORE"])
+    ws.append(["included-1", None, None, None, None, None, " tl-010 "])
+    ws.append(["included-2", None, None, None, None, None, "TL-011"])
+    ws.append(["skip-after-range", None, None, None, None, None, "TL-SKIP-AFTER"])
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def _add_booking(db_session, *, user_id: int, object_id: int, direction: str, tl_number: str, slot_date: date):
     dock_type = models.DockType.entrance if direction == "in" else models.DockType.exit
     dock = models.Dock(name=f"Dock {tl_number}", dock_type=dock_type, object_id=object_id)
@@ -164,3 +178,46 @@ def test_comparison_run_matches_tl_case_insensitive_and_checks_extended_period(t
     detail = test_client.get(f"/api/data-comparisons/runs/{payload['id']}")
     assert detail.status_code == 200
     assert detail.json()["rows"] == payload["rows"]
+
+
+def test_profile_can_read_tl_by_excel_column_letter_and_row_range(test_client, db_session, admin_user):
+    obj = models.Object(name="РЦ Диапазон", object_type=models.ObjectType.warehouse)
+    db_session.add(obj)
+    db_session.commit()
+
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-010", slot_date=date(2026, 7, 10))
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-011", slot_date=date(2026, 7, 10))
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-SKIP-AFTER", slot_date=date(2026, 7, 10))
+
+    profile_response = test_client.post(
+        "/api/data-comparisons/profiles",
+        json={
+            "name": "РЦ Диапазон — Вход",
+            "object_id": obj.id,
+            "direction": "in",
+            "tl_column_letter": "g",
+            "file_start_row": 3,
+            "file_end_row": 4,
+            "status_filters": ["confirmed"],
+        },
+    )
+    assert profile_response.status_code == 200
+    profile_payload = profile_response.json()
+    assert profile_payload["tl_column_letter"] == "G"
+    assert profile_payload["file_start_row"] == 3
+    assert profile_payload["file_end_row"] == 4
+
+    response = test_client.post(
+        "/api/data-comparisons/runs",
+        data={"profile_id": str(profile_payload["id"]), "date_from": "2026-07-10", "date_to": "2026-07-10"},
+        files={"file": ("comparison.xlsx", _xlsx_with_tl_in_column_g(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["file_rows"] == 2
+    assert payload["summary"]["matched"] == 2
+    assert payload["summary"]["missing_in_file"] == 1
+    assert [row["file_row_number"] for row in payload["rows"] if row["status"] == "matched"] == [3, 4]
+    assert {row["tl_number_normalized"] for row in payload["rows"] if row["status"] == "matched"} == {"TL-010", "TL-011"}
+    assert all(row["tl_number_normalized"] != "TL-SKIP-BEFORE" for row in payload["rows"])

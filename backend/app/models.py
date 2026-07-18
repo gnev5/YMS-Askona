@@ -409,6 +409,9 @@ class DataComparisonProfile(Base):
         index=True,
     )
     tl_column_name: Mapped[str] = mapped_column(String(100), nullable=False, default="Номер ТЛ")
+    tl_column_letter: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    file_start_row: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    file_end_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status_filters: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=lambda: ["confirmed"])
     yms_filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     file_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

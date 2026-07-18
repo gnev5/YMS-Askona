@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
 from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload
 
@@ -35,6 +36,9 @@ def _profile_to_dict(profile: models.DataComparisonProfile) -> dict:
         "object_name": profile.object.name if profile.object else None,
         "direction": profile.direction.value if hasattr(profile.direction, "value") else profile.direction,
         "tl_column_name": profile.tl_column_name,
+        "tl_column_letter": profile.tl_column_letter,
+        "file_start_row": profile.file_start_row,
+        "file_end_row": profile.file_end_row,
         "status_filters": profile.status_filters or [],
         "yms_filters": profile.yms_filters or {},
         "file_settings": profile.file_settings or {},
@@ -83,17 +87,66 @@ def _run_to_dict(run: models.DataComparisonRun, include_rows: bool = False) -> d
     return payload
 
 
-def _parse_xlsx_rows(content: bytes, tl_column_name: str) -> list[dict]:
+def _normalize_excel_column_letter(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().upper()
+    if not normalized:
+        return None
+    try:
+        column_index_from_string(normalized)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Столбец с номером ТЛ должен быть буквой Excel, например A, G или AA")
+    return normalized
+
+
+def _parse_xlsx_rows(
+    content: bytes,
+    tl_column_name: str,
+    tl_column_letter: str | None = None,
+    file_start_row: int = 2,
+    file_end_row: int | None = None,
+) -> list[dict]:
     wb = load_workbook(BytesIO(content), data_only=True)
     ws = wb.active
+    start_row = file_start_row or 2
+    if start_row < 1:
+        raise HTTPException(status_code=400, detail="Строка начала должна быть не меньше 1")
+    if file_end_row is not None and file_end_row < start_row:
+        raise HTTPException(status_code=400, detail="Строка окончания не может быть меньше строки начала")
+
+    normalized_letter = _normalize_excel_column_letter(tl_column_letter)
+    parsed = []
+    if normalized_letter:
+        column_index = column_index_from_string(normalized_letter)
+        end_row = file_end_row or ws.max_row
+        if column_index > ws.max_column:
+            raise HTTPException(status_code=400, detail=f"В файле нет столбца '{normalized_letter}'")
+        for row_number in range(start_row, end_row + 1):
+            tl_original = ws.cell(row=row_number, column=column_index).value
+            tl_normalized = normalize_tl_number(tl_original)
+            if not tl_normalized:
+                continue
+            row_values = {
+                ws.cell(row=1, column=col_idx).value or f"Колонка {col_idx}": ws.cell(row=row_number, column=col_idx).value
+                for col_idx in range(1, ws.max_column + 1)
+            }
+            parsed.append({
+                "row_number": row_number,
+                "tl_original": str(tl_original).strip() if tl_original is not None else "",
+                "tl_normalized": tl_normalized,
+                "data": row_values,
+            })
+        return parsed
+
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         return []
     headers = [str(cell).strip() if cell is not None else "" for cell in rows[0]]
     if tl_column_name not in headers:
         raise HTTPException(status_code=400, detail=f"В файле не найдена колонка '{tl_column_name}'")
-    parsed = []
-    for idx, values in enumerate(rows[1:], start=2):
+    end_index = file_end_row or len(rows)
+    for idx, values in enumerate(rows[start_row - 1:end_index], start=start_row):
         data = {headers[col_idx]: values[col_idx] if col_idx < len(values) else None for col_idx in range(len(headers)) if headers[col_idx]}
         tl_original = data.get(tl_column_name)
         tl_normalized = normalize_tl_number(tl_original)
@@ -167,11 +220,19 @@ def create_profile(payload: schemas.DataComparisonProfileCreate, db: Session = D
         direction = models.BookingDirection(payload.direction)
     except Exception:
         raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+    tl_column_letter = _normalize_excel_column_letter(payload.tl_column_letter)
+    if payload.file_start_row < 1:
+        raise HTTPException(status_code=400, detail="Строка начала должна быть не меньше 1")
+    if payload.file_end_row is not None and payload.file_end_row < payload.file_start_row:
+        raise HTTPException(status_code=400, detail="Строка окончания не может быть меньше строки начала")
     profile = models.DataComparisonProfile(
         name=payload.name,
         object_id=payload.object_id,
         direction=direction,
         tl_column_name=payload.tl_column_name,
+        tl_column_letter=tl_column_letter,
+        file_start_row=payload.file_start_row,
+        file_end_row=payload.file_end_row,
         status_filters=payload.status_filters or ["confirmed"],
         yms_filters=payload.yms_filters or {},
         file_settings=payload.file_settings or {},
@@ -200,7 +261,13 @@ async def create_run(
     if not profile:
         raise HTTPException(status_code=404, detail="Профиль сверки не найден")
     content = await file.read()
-    file_rows = _parse_xlsx_rows(content, profile.tl_column_name)
+    file_rows = _parse_xlsx_rows(
+        content,
+        profile.tl_column_name,
+        profile.tl_column_letter,
+        profile.file_start_row,
+        profile.file_end_row,
+    )
     extended_from = date_from - timedelta(days=2)
     extended_to = date_to + timedelta(days=2)
 
