@@ -8,18 +8,9 @@ type Profile = {
   name: string
   object_name?: string | null
   direction: 'in' | 'out'
-  tl_column_name: string
   tl_column_letter?: string | null
-  file_start_row: number
-  file_end_row?: number | null
   status_filters: string[]
   is_active: boolean
-}
-
-type YmsObject = {
-  id: number
-  name: string
-  object_type?: string
 }
 
 type RunRow = {
@@ -89,29 +80,24 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const token = useMemo(() => localStorage.getItem('token'), [])
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
   const [profiles, setProfiles] = useState<Profile[]>([])
-  const [objects, setObjects] = useState<YmsObject[]>([])
   const [runs, setRuns] = useState<ComparisonRun[]>([])
   const [selectedRun, setSelectedRun] = useState<ComparisonRun | null>(null)
   const [profileId, setProfileId] = useState('')
   const [dateFrom, setDateFrom] = useState(todayYmd())
   const [dateTo, setDateTo] = useState(todayYmd())
+  const [fileStartRow, setFileStartRow] = useState('2')
+  const [fileEndRow, setFileEndRow] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
-  const [profileName, setProfileName] = useState('')
-  const [profileObjectId, setProfileObjectId] = useState('')
-  const [profileDirection, setProfileDirection] = useState<'in' | 'out'>('in')
-  const [tlColumnLetter, setTlColumnLetter] = useState('G')
-  const [fileStartRow, setFileStartRow] = useState('2')
-  const [fileEndRow, setFileEndRow] = useState('')
-  const [statusFiltersText, setStatusFiltersText] = useState('confirmed')
 
   const loadProfiles = async () => {
     const { data } = await axios.get<Profile[]>(`${API_BASE}/api/data-comparisons/profiles`, { headers })
-    setProfiles(data.filter(profile => profile.is_active))
-    if (!profileId && data.length > 0) setProfileId(String(data[0].id))
+    const activeProfiles = data.filter(profile => profile.is_active)
+    setProfiles(activeProfiles)
+    if (!profileId && activeProfiles.length > 0) setProfileId(String(activeProfiles[0].id))
   }
 
   const loadRuns = async () => {
@@ -119,17 +105,11 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
     setRuns(data)
   }
 
-  const loadObjects = async () => {
-    const { data } = await axios.get<YmsObject[]>(`${API_BASE}/api/objects`, { headers })
-    setObjects(data)
-    if (!profileObjectId && data.length > 0) setProfileObjectId(String(data[0].id))
-  }
-
   const loadInitial = async () => {
     setLoading(true)
     setError(null)
     try {
-      await Promise.all([loadProfiles(), loadRuns(), loadObjects()])
+      await Promise.all([loadProfiles(), loadRuns()])
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || 'Ошибка загрузки модуля сверок')
     } finally {
@@ -142,12 +122,12 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const submitProfile = async (e: React.FormEvent) => {
+  const submitRun = async (e: React.FormEvent) => {
     e.preventDefault()
     const startRow = Number(fileStartRow)
     const endRow = fileEndRow ? Number(fileEndRow) : null
-    if (!profileName.trim() || !profileObjectId || !tlColumnLetter.trim()) {
-      setError('Заполните название профиля, объект и столбец с номером ТЛ')
+    if (!profileId || !dateFrom || !dateTo || !file) {
+      setError('Выберите профиль сверки, даты с/по и файл')
       return
     }
     if (!Number.isInteger(startRow) || startRow < 1 || (endRow !== null && (!Number.isInteger(endRow) || endRow < startRow))) {
@@ -158,52 +138,12 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
     setError(null)
     setSuccess(null)
     try {
-      const statusFilters = statusFiltersText
-        .split(',')
-        .map(status => status.trim())
-        .filter(Boolean)
-      const { data } = await axios.post<Profile>(`${API_BASE}/api/data-comparisons/profiles`, {
-        name: profileName.trim(),
-        object_id: Number(profileObjectId),
-        direction: profileDirection,
-        tl_column_name: 'Номер ТЛ',
-        tl_column_letter: tlColumnLetter.trim().toUpperCase(),
-        file_start_row: startRow,
-        file_end_row: endRow,
-        status_filters: statusFilters.length > 0 ? statusFilters : ['confirmed'],
-        yms_filters: {},
-        file_settings: {},
-        comparison_settings: {},
-        is_active: true,
-      }, { headers })
-      setSuccess('Профиль сверки создан')
-      setProfileId(String(data.id))
-      setProfileName('')
-      setTlColumnLetter('G')
-      setFileStartRow('2')
-      setFileEndRow('')
-      await loadProfiles()
-    } catch (e: any) {
-      setError(e.response?.data?.detail || e.message || 'Ошибка создания профиля сверки')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const submitRun = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!profileId || !dateFrom || !dateTo || !file) {
-      setError('Выберите профиль сверки, даты с/по и файл')
-      return
-    }
-    setLoading(true)
-    setError(null)
-    setSuccess(null)
-    try {
       const formData = new FormData()
       formData.append('profile_id', profileId)
       formData.append('date_from', dateFrom)
       formData.append('date_to', dateTo)
+      formData.append('file_start_row', String(startRow))
+      if (endRow !== null) formData.append('file_end_row', String(endRow))
       formData.append('file', file)
       const { data } = await axios.post<ComparisonRun>(`${API_BASE}/api/data-comparisons/runs`, formData, { headers })
       setSelectedRun(data)
@@ -239,7 +179,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
         {onBack && <button className="secondary" onClick={onBack}>← Назад</button>}
         <div>
           <h1>Сверка данных</h1>
-          <p className="muted">Профиль задаёт объект, направление и автоматические фильтры YMS. Пользователь выбирает только Дата с / Дата по и файл.</p>
+          <p className="muted">Выберите профиль сверки, период, строки файла и Excel-файл. Профили настраиваются в отдельном разделе «Профили сверки».</p>
         </div>
       </div>
 
@@ -247,51 +187,8 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       {success && <div className="success">{success}</div>}
 
       <section className="card">
-        <h2>Создать профиль сверки</h2>
-        <p className="muted">Профиль создаётся один раз для конкретного РЦ/объекта и направления. Здесь задаются столбец Excel с номером ТЛ и диапазон строк файла.</p>
-        <form onSubmit={submitProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr 2fr auto', gap: 12, alignItems: 'end' }}>
-          <label>
-            Название профиля
-            <input value={profileName} onChange={e => setProfileName(e.target.value)} placeholder="РЦ Краснодар — Вход" />
-          </label>
-          <label>
-            Объект / РЦ
-            <select value={profileObjectId} onChange={e => setProfileObjectId(e.target.value)}>
-              {objects.map(object => (
-                <option key={object.id} value={object.id}>{object.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Направление
-            <select value={profileDirection} onChange={e => setProfileDirection(e.target.value as 'in' | 'out')}>
-              <option value="in">Вход</option>
-              <option value="out">Выход</option>
-            </select>
-          </label>
-          <label>
-            Столбец с номером ТЛ
-            <input value={tlColumnLetter} onChange={e => setTlColumnLetter(e.target.value.toUpperCase())} placeholder="G" maxLength={3} />
-          </label>
-          <label>
-            Строка начала
-            <input type="number" min="1" value={fileStartRow} onChange={e => setFileStartRow(e.target.value)} placeholder="2" />
-          </label>
-          <label>
-            Строка окончания
-            <input type="number" min="1" value={fileEndRow} onChange={e => setFileEndRow(e.target.value)} placeholder="пусто = до конца" />
-          </label>
-          <label>
-            Статусы YMS через запятую
-            <input value={statusFiltersText} onChange={e => setStatusFiltersText(e.target.value)} placeholder="confirmed" />
-          </label>
-          <button disabled={loading}>{loading ? '...' : 'Создать'}</button>
-        </form>
-      </section>
-
-      <section className="card">
         <h2>Новая сверка</h2>
-        <form onSubmit={submitRun} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 2fr auto', gap: 12, alignItems: 'end' }}>
+        <form onSubmit={submitRun} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 2fr auto', gap: 12, alignItems: 'end' }}>
           <label>
             Профиль сверки
             <select value={profileId} onChange={e => setProfileId(e.target.value)}>
@@ -307,6 +204,14 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
           <label>
             Дата по
             <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </label>
+          <label>
+            Строка начала
+            <input type="number" min="1" value={fileStartRow} onChange={e => setFileStartRow(e.target.value)} placeholder="2" />
+          </label>
+          <label>
+            Строка окончания
+            <input type="number" min="1" value={fileEndRow} onChange={e => setFileEndRow(e.target.value)} placeholder="пусто = до конца" />
           </label>
           <label>
             Файл Excel

@@ -484,6 +484,7 @@ class DataComparisonProfileCreate(BaseModel):
     direction: str
     tl_column_name: str = "Номер ТЛ"
     tl_column_letter: Optional[str] = None
+    # Legacy defaults remain for old API clients; the UI now treats row range as run parameters.
     file_start_row: int = 2
     file_end_row: Optional[int] = None
     status_filters: List[str] = ["confirmed"]
@@ -491,3 +492,7 @@ class DataComparisonProfileCreate(BaseModel):
     file_settings: dict = {}
     comparison_settings: dict = {}
     is_active: bool = True
+
+
+class DataComparisonProfileUpdate(DataComparisonProfileCreate):
+    pass

@@ -221,3 +221,95 @@ def test_profile_can_read_tl_by_excel_column_letter_and_row_range(test_client, d
     assert [row["file_row_number"] for row in payload["rows"] if row["status"] == "matched"] == [3, 4]
     assert {row["tl_number_normalized"] for row in payload["rows"] if row["status"] == "matched"} == {"TL-010", "TL-011"}
     assert all(row["tl_number_normalized"] != "TL-SKIP-BEFORE" for row in payload["rows"])
+
+
+def test_profile_can_be_updated_for_separate_profiles_section(test_client, db_session):
+    first_obj = models.Object(name="РЦ Старый", object_type=models.ObjectType.warehouse)
+    second_obj = models.Object(name="РЦ Новый", object_type=models.ObjectType.warehouse)
+    db_session.add_all([first_obj, second_obj])
+    db_session.commit()
+
+    create_response = test_client.post(
+        "/api/data-comparisons/profiles",
+        json={
+            "name": "Профиль до редактирования",
+            "object_id": first_obj.id,
+            "direction": "in",
+            "tl_column_letter": "g",
+            "status_filters": ["confirmed"],
+        },
+    )
+    assert create_response.status_code == 200
+    profile_id = create_response.json()["id"]
+
+    update_response = test_client.put(
+        f"/api/data-comparisons/profiles/{profile_id}",
+        json={
+            "name": "Профиль после редактирования",
+            "object_id": second_obj.id,
+            "direction": "out",
+            "tl_column_letter": "h",
+            "status_filters": ["confirmed", "completed"],
+            "is_active": False,
+        },
+    )
+
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["name"] == "Профиль после редактирования"
+    assert payload["object_id"] == second_obj.id
+    assert payload["object_name"] == "РЦ Новый"
+    assert payload["direction"] == "out"
+    assert payload["tl_column_letter"] == "H"
+    assert payload["status_filters"] == ["confirmed", "completed"]
+    assert payload["is_active"] is False
+
+    profiles = test_client.get("/api/data-comparisons/profiles")
+    assert profiles.status_code == 200
+    stored = next(profile for profile in profiles.json() if profile["id"] == profile_id)
+    assert stored["name"] == "Профиль после редактирования"
+
+
+def test_run_row_range_is_launch_parameter_not_profile_setting(test_client, db_session, admin_user):
+    obj = models.Object(name="РЦ Запуск", object_type=models.ObjectType.warehouse)
+    db_session.add(obj)
+    db_session.commit()
+
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-010", slot_date=date(2026, 7, 10))
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-011", slot_date=date(2026, 7, 10))
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-SKIP-AFTER", slot_date=date(2026, 7, 10))
+
+    profile_response = test_client.post(
+        "/api/data-comparisons/profiles",
+        json={
+            "name": "РЦ Запуск — Вход",
+            "object_id": obj.id,
+            "direction": "in",
+            "tl_column_letter": "g",
+            "status_filters": ["confirmed"],
+        },
+    )
+    assert profile_response.status_code == 200
+    profile_payload = profile_response.json()
+    assert profile_payload["file_start_row"] == 2
+    assert profile_payload["file_end_row"] is None
+
+    response = test_client.post(
+        "/api/data-comparisons/runs",
+        data={
+            "profile_id": str(profile_payload["id"]),
+            "date_from": "2026-07-10",
+            "date_to": "2026-07-10",
+            "file_start_row": "3",
+            "file_end_row": "4",
+        },
+        files={"file": ("comparison.xlsx", _xlsx_with_tl_in_column_g(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["file_rows"] == 2
+    assert payload["summary"]["matched"] == 2
+    assert payload["summary"]["missing_in_file"] == 1
+    assert [row["file_row_number"] for row in payload["rows"] if row["status"] == "matched"] == [3, 4]
+    assert {row["tl_number_normalized"] for row in payload["rows"] if row["status"] == "matched"} == {"TL-010", "TL-011"}

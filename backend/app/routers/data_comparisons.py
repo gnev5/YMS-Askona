@@ -245,11 +245,45 @@ def create_profile(payload: schemas.DataComparisonProfileCreate, db: Session = D
     return _profile_to_dict(profile)
 
 
+@router.put("/profiles/{profile_id}")
+def update_profile(profile_id: int, payload: schemas.DataComparisonProfileUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_admin(current_user)
+    profile = db.query(models.DataComparisonProfile).filter(models.DataComparisonProfile.id == profile_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Профиль сверки не найден")
+    obj = db.query(models.Object).filter(models.Object.id == payload.object_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Object not found")
+    try:
+        direction = models.BookingDirection(payload.direction)
+    except Exception:
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+    tl_column_letter = _normalize_excel_column_letter(payload.tl_column_letter)
+
+    profile.name = payload.name
+    profile.object_id = payload.object_id
+    profile.direction = direction
+    profile.tl_column_name = payload.tl_column_name
+    profile.tl_column_letter = tl_column_letter
+    # Row range is intentionally not edited here by the UI; keep stored defaults for legacy clients only.
+    profile.status_filters = payload.status_filters or ["confirmed"]
+    profile.yms_filters = payload.yms_filters or {}
+    profile.file_settings = payload.file_settings or {}
+    profile.comparison_settings = payload.comparison_settings or {}
+    profile.is_active = payload.is_active
+
+    db.commit()
+    db.refresh(profile)
+    return _profile_to_dict(profile)
+
+
 @router.post("/runs")
 async def create_run(
     profile_id: int = Form(...),
     date_from: date = Form(...),
     date_to: date = Form(...),
+    file_start_row: int | None = Form(None),
+    file_end_row: int | None = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
@@ -260,13 +294,19 @@ async def create_run(
     profile = db.query(models.DataComparisonProfile).filter(models.DataComparisonProfile.id == profile_id, models.DataComparisonProfile.is_active == True).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Профиль сверки не найден")
+    start_row = file_start_row if file_start_row is not None else profile.file_start_row
+    end_row = file_end_row if file_end_row is not None else profile.file_end_row
+    if start_row < 1:
+        raise HTTPException(status_code=400, detail="Строка начала должна быть не меньше 1")
+    if end_row is not None and end_row < start_row:
+        raise HTTPException(status_code=400, detail="Строка окончания не может быть меньше строки начала")
     content = await file.read()
     file_rows = _parse_xlsx_rows(
         content,
         profile.tl_column_name,
         profile.tl_column_letter,
-        profile.file_start_row,
-        profile.file_end_row,
+        start_row,
+        end_row,
     )
     extended_from = date_from - timedelta(days=2)
     extended_to = date_to + timedelta(days=2)
