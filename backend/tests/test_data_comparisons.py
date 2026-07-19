@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, time as dt_time
 from io import BytesIO
 
 import pytest
@@ -93,6 +93,17 @@ def _xlsx_with_tl_in_column_g() -> BytesIO:
     return buf
 
 
+def _xlsx_with_time_cell_in_file_data() -> BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Плановое время", "Номер ТЛ"])
+    ws.append([dt_time(8, 30), "TL-TIME"])
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def _add_booking(db_session, *, user_id: int, object_id: int, direction: str, tl_number: str, slot_date: date):
     dock_type = models.DockType.entrance if direction == "in" else models.DockType.exit
     dock = models.Dock(name=f"Dock {tl_number}", dock_type=dock_type, object_id=object_id)
@@ -102,8 +113,8 @@ def _add_booking(db_session, *, user_id: int, object_id: int, direction: str, tl
     slot = models.TimeSlot(
         dock_id=dock.id,
         slot_date=slot_date,
-        start_time=time(10, 0),
-        end_time=time(10, 30),
+        start_time=dt_time(10, 0),
+        end_time=dt_time(10, 30),
         capacity=1,
     )
     booking = models.Booking(
@@ -313,3 +324,40 @@ def test_run_row_range_is_launch_parameter_not_profile_setting(test_client, db_s
     assert payload["summary"]["missing_in_file"] == 1
     assert [row["file_row_number"] for row in payload["rows"] if row["status"] == "matched"] == [3, 4]
     assert {row["tl_number_normalized"] for row in payload["rows"] if row["status"] == "matched"} == {"TL-010", "TL-011"}
+
+
+def test_run_persists_file_and_yms_json_with_time_values(test_client, db_session, admin_user):
+    obj = models.Object(name="РЦ Время", object_type=models.ObjectType.warehouse)
+    db_session.add(obj)
+    db_session.commit()
+
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-TIME", slot_date=date(2026, 7, 10))
+
+    profile_response = test_client.post(
+        "/api/data-comparisons/profiles",
+        json={
+            "name": "РЦ Время — Вход",
+            "object_id": obj.id,
+            "direction": "in",
+            "tl_column_letter": "b",
+            "status_filters": ["confirmed"],
+        },
+    )
+    assert profile_response.status_code == 200
+
+    response = test_client.post(
+        "/api/data-comparisons/runs",
+        data={
+            "profile_id": str(profile_response.json()["id"]),
+            "date_from": "2026-07-10",
+            "date_to": "2026-07-10",
+            "file_start_row": "2",
+        },
+        files={"file": ("comparison.xlsx", _xlsx_with_time_cell_in_file_data(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    matched = next(row for row in payload["rows"] if row["status"] == "matched")
+    assert matched["file_data"]["Плановое время"] == "08:30:00"
+    assert matched["yms_data"]["start_time"] == "10:00:00"

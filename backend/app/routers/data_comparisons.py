@@ -4,6 +4,7 @@ from io import BytesIO
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.encoders import jsonable_encoder
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
 from sqlalchemy import and_
@@ -379,8 +380,8 @@ async def create_run(
             status=status,
             file_row_number=file_row["row_number"],
             booking_id=booking_id,
-            file_data=file_row["data"],
-            yms_data=yms_data,
+            file_data=jsonable_encoder(file_row["data"]),
+            yms_data=jsonable_encoder(yms_data),
             differences=[],
         ))
 
@@ -397,7 +398,7 @@ async def create_run(
             file_row_number=None,
             booking_id=bookings[0].get("id") if len(bookings) == 1 else None,
             file_data=None,
-            yms_data=bookings if len(bookings) > 1 else bookings[0],
+            yms_data=jsonable_encoder(bookings if len(bookings) > 1 else bookings[0]),
             differences=[],
         ))
 
