@@ -32,5 +32,8 @@ assert.ok(profilesPage.includes('Редактировать'), 'Profiles page sh
 assert.ok(profilesPage.includes('Сохранить'), 'Profiles page should save profile edits')
 assert.ok(profilesPage.includes('/api/data-comparisons/profiles'), 'Profiles page should use profiles API')
 assert.ok(profilesPage.includes('axios.put'), 'Profiles page should update profiles via PUT')
+assert.ok(profilesPage.includes('Колонки Excel для снимка'), 'Profiles page should configure saved Excel snapshot columns')
+assert.ok(profilesPage.includes('snapshot_columns'), 'Profiles page should persist snapshot_columns in file_settings')
+assert.ok(profilesPage.includes('A:C,E'), 'Profiles page should show range/list examples such as A:C,E')
 assert.ok(!profilesPage.includes('Строка начала'), 'Profiles page should not treat checked row range as profile settings')
 assert.ok(!profilesPage.includes('Строка окончания'), 'Profiles page should not treat checked row range as profile settings')

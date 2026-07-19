@@ -12,6 +12,10 @@ type Profile = {
   tl_column_name: string
   tl_column_letter?: string | null
   status_filters: string[]
+  file_settings?: {
+    snapshot_columns?: string
+    [key: string]: any
+  }
   is_active: boolean
 }
 
@@ -27,6 +31,7 @@ type ProfileForm = {
   objectId: string
   direction: 'in' | 'out'
   tlColumnLetter: string
+  snapshotColumns: string
   statusFiltersText: string
   isActive: boolean
 }
@@ -36,6 +41,7 @@ const emptyForm = (): ProfileForm => ({
   objectId: '',
   direction: 'in',
   tlColumnLetter: 'G',
+  snapshotColumns: '',
   statusFiltersText: 'confirmed',
   isActive: true,
 })
@@ -93,6 +99,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       objectId: String(profile.object_id),
       direction: profile.direction,
       tlColumnLetter: profile.tl_column_letter || 'G',
+      snapshotColumns: profile.file_settings?.snapshot_columns || '',
       statusFiltersText: (profile.status_filters || ['confirmed']).join(', '),
       isActive: profile.is_active,
     })
@@ -106,6 +113,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       objectId: String(profile.object_id),
       direction: profile.direction,
       tlColumnLetter: profile.tl_column_letter || 'G',
+      snapshotColumns: profile.file_settings?.snapshot_columns || '',
       statusFiltersText: (profile.status_filters || ['confirmed']).join(', '),
       isActive: true,
     })
@@ -131,7 +139,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       tl_column_letter: form.tlColumnLetter.trim().toUpperCase(),
       status_filters: statusFilters.length > 0 ? statusFilters : ['confirmed'],
       yms_filters: {},
-      file_settings: {},
+      file_settings: form.snapshotColumns.trim() ? { snapshot_columns: form.snapshotColumns.trim().toUpperCase() } : {},
       comparison_settings: {},
       is_active: form.isActive,
     }
@@ -164,7 +172,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       tl_column_letter: profile.tl_column_letter || 'G',
       status_filters: profile.status_filters || ['confirmed'],
       yms_filters: {},
-      file_settings: {},
+      file_settings: profile.file_settings || {},
       comparison_settings: {},
       is_active: !profile.is_active,
     }
@@ -188,7 +196,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
         {onBack && <button className="secondary" onClick={onBack}>← Назад</button>}
         <div>
           <h1>Профили сверки</h1>
-          <p className="muted">Здесь настраиваются постоянные правила сверки: объект, направление, столбец ТЛ и фильтры YMS. Даты и диапазон строк задаются при запуске сверки.</p>
+          <p className="muted">Здесь настраиваются постоянные правила сверки: объект, направление, столбец ТЛ, колонки Excel для снимка и фильтры YMS. Даты и диапазон строк задаются при запуске сверки.</p>
         </div>
       </div>
 
@@ -197,7 +205,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
 
       <section className="card">
         <h2>{form.id ? 'Редактировать профиль' : 'Создать профиль'}</h2>
-        <form onSubmit={saveProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 2fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
+        <form onSubmit={saveProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1.5fr 2fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
           <label>
             Название профиля
             <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="РЦ Краснодар — Вход" />
@@ -220,6 +228,10 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
           <label>
             Столбец с номером ТЛ
             <input value={form.tlColumnLetter} onChange={e => setForm({ ...form, tlColumnLetter: e.target.value.toUpperCase() })} placeholder="G" maxLength={3} />
+          </label>
+          <label>
+            Колонки Excel для снимка
+            <input value={form.snapshotColumns} onChange={e => setForm({ ...form, snapshotColumns: e.target.value.toUpperCase() })} placeholder="A:C,E" />
           </label>
           <label>
             Статусы YMS через запятую
@@ -247,6 +259,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
                 <th>Объект / РЦ</th>
                 <th>Направление</th>
                 <th>Столбец ТЛ</th>
+                <th>Снимок Excel</th>
                 <th>Статусы YMS</th>
                 <th>Активен</th>
                 <th></th>
@@ -259,6 +272,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
                   <td>{profile.object_name || profile.object_id}</td>
                   <td>{profile.direction === 'in' ? 'Вход' : 'Выход'}</td>
                   <td>{profile.tl_column_letter || '—'}</td>
+                  <td>{profile.file_settings?.snapshot_columns || 'Все колонки'}</td>
                   <td>{(profile.status_filters || []).join(', ')}</td>
                   <td>{profile.is_active ? 'Да' : 'Нет'}</td>
                   <td style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

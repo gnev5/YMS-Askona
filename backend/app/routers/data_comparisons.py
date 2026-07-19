@@ -101,15 +101,61 @@ def _normalize_excel_column_letter(value: str | None) -> str | None:
     return normalized
 
 
+def _parse_snapshot_column_indices(snapshot_columns: Any, max_column: int) -> set[int] | None:
+    if snapshot_columns is None:
+        return None
+    if isinstance(snapshot_columns, str):
+        raw_parts = [part.strip().upper() for part in snapshot_columns.split(",")]
+    elif isinstance(snapshot_columns, list):
+        raw_parts = [str(part).strip().upper() for part in snapshot_columns]
+    else:
+        raise HTTPException(status_code=400, detail="Колонки для снимка Excel должны быть строкой A:G или списком колонок")
+
+    parts = [part for part in raw_parts if part]
+    if not parts:
+        return None
+
+    indices: set[int] = set()
+    for part in parts:
+        if ":" in part:
+            start, end = [value.strip() for value in part.split(":", 1)]
+            try:
+                start_idx = column_index_from_string(start)
+                end_idx = column_index_from_string(end)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Колонки для снимка Excel должны быть в формате A:G или A,C,D")
+            if end_idx < start_idx:
+                raise HTTPException(status_code=400, detail="Конец диапазона колонок Excel не может быть раньше начала")
+            indices.update(range(start_idx, end_idx + 1))
+        else:
+            try:
+                indices.add(column_index_from_string(part))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Колонки для снимка Excel должны быть в формате A:G или A,C,D")
+
+    return {idx for idx in indices if 1 <= idx <= max_column}
+
+
+def _worksheet_row_values(ws, row_number: int, allowed_column_indices: set[int] | None = None) -> dict:
+    column_indices = range(1, ws.max_column + 1) if allowed_column_indices is None else sorted(allowed_column_indices)
+    return {
+        ws.cell(row=1, column=col_idx).value or f"Колонка {col_idx}": ws.cell(row=row_number, column=col_idx).value
+        for col_idx in column_indices
+        if col_idx <= ws.max_column
+    }
+
+
 def _parse_xlsx_rows(
     content: bytes,
     tl_column_name: str,
     tl_column_letter: str | None = None,
     file_start_row: int = 2,
     file_end_row: int | None = None,
+    snapshot_columns: Any = None,
 ) -> list[dict]:
     wb = load_workbook(BytesIO(content), data_only=True)
     ws = wb.active
+    snapshot_column_indices = _parse_snapshot_column_indices(snapshot_columns, ws.max_column)
     start_row = file_start_row or 2
     if start_row < 1:
         raise HTTPException(status_code=400, detail="Строка начала должна быть не меньше 1")
@@ -128,10 +174,7 @@ def _parse_xlsx_rows(
             tl_normalized = normalize_tl_number(tl_original)
             if not tl_normalized:
                 continue
-            row_values = {
-                ws.cell(row=1, column=col_idx).value or f"Колонка {col_idx}": ws.cell(row=row_number, column=col_idx).value
-                for col_idx in range(1, ws.max_column + 1)
-            }
+            row_values = _worksheet_row_values(ws, row_number, snapshot_column_indices)
             parsed.append({
                 "row_number": row_number,
                 "tl_original": str(tl_original).strip() if tl_original is not None else "",
@@ -148,8 +191,12 @@ def _parse_xlsx_rows(
         raise HTTPException(status_code=400, detail=f"В файле не найдена колонка '{tl_column_name}'")
     end_index = file_end_row or len(rows)
     for idx, values in enumerate(rows[start_row - 1:end_index], start=start_row):
-        data = {headers[col_idx]: values[col_idx] if col_idx < len(values) else None for col_idx in range(len(headers)) if headers[col_idx]}
-        tl_original = data.get(tl_column_name)
+        data = {
+            headers[col_idx]: values[col_idx] if col_idx < len(values) else None
+            for col_idx in range(len(headers))
+            if headers[col_idx] and (snapshot_column_indices is None or col_idx + 1 in snapshot_column_indices)
+        }
+        tl_original = values[headers.index(tl_column_name)] if headers.index(tl_column_name) < len(values) else None
         tl_normalized = normalize_tl_number(tl_original)
         if not tl_normalized:
             continue
@@ -308,6 +355,7 @@ async def create_run(
         profile.tl_column_letter,
         start_row,
         end_row,
+        (profile.file_settings or {}).get("snapshot_columns"),
     )
     extended_from = date_from - timedelta(days=2)
     extended_to = date_to + timedelta(days=2)

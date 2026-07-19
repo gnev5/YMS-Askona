@@ -104,6 +104,17 @@ def _xlsx_with_time_cell_in_file_data() -> BytesIO:
     return buf
 
 
+def _xlsx_for_snapshot_columns() -> BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Дата", "Ворота", "Номер ТЛ", "Лишнее поле", "Смена"])
+    ws.append([date(2026, 7, 10), "Ворота 1", "TL-SNAPSHOT", "не сохранять", "Смена А"])
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def _add_booking(db_session, *, user_id: int, object_id: int, direction: str, tl_number: str, slot_date: date):
     dock_type = models.DockType.entrance if direction == "in" else models.DockType.exit
     dock = models.Dock(name=f"Dock {tl_number}", dock_type=dock_type, object_id=object_id)
@@ -361,3 +372,45 @@ def test_run_persists_file_and_yms_json_with_time_values(test_client, db_session
     matched = next(row for row in payload["rows"] if row["status"] == "matched")
     assert matched["file_data"]["Плановое время"] == "08:30:00"
     assert matched["yms_data"]["start_time"] == "10:00:00"
+
+def test_profile_snapshot_columns_limit_saved_excel_file_data(test_client, db_session, admin_user):
+    obj = models.Object(name="РЦ Снимок", object_type=models.ObjectType.warehouse)
+    db_session.add(obj)
+    db_session.commit()
+
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-SNAPSHOT", slot_date=date(2026, 7, 10))
+
+    profile_response = test_client.post(
+        "/api/data-comparisons/profiles",
+        json={
+            "name": "РЦ Снимок — Вход",
+            "object_id": obj.id,
+            "direction": "in",
+            "tl_column_letter": "c",
+            "status_filters": ["confirmed"],
+            "file_settings": {"snapshot_columns": "A:C,E"},
+        },
+    )
+    assert profile_response.status_code == 200
+    assert profile_response.json()["file_settings"]["snapshot_columns"] == "A:C,E"
+
+    response = test_client.post(
+        "/api/data-comparisons/runs",
+        data={
+            "profile_id": str(profile_response.json()["id"]),
+            "date_from": "2026-07-10",
+            "date_to": "2026-07-10",
+            "file_start_row": "2",
+        },
+        files={"file": ("comparison.xlsx", _xlsx_for_snapshot_columns(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+
+    assert response.status_code == 200
+    matched = next(row for row in response.json()["rows"] if row["status"] == "matched")
+    assert matched["file_data"] == {
+        "Дата": "2026-07-10T00:00:00",
+        "Ворота": "Ворота 1",
+        "Номер ТЛ": "TL-SNAPSHOT",
+        "Смена": "Смена А",
+    }
+
