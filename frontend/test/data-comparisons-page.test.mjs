@@ -24,6 +24,11 @@ assert.ok(comparisonsPage.includes('Строка начала'), 'Run page shoul
 assert.ok(comparisonsPage.includes('Строка окончания'), 'Run page should configure last checked row per run')
 assert.ok(!comparisonsPage.includes('Создать профиль сверки'), 'Run page should not include profile creation form')
 assert.ok(comparisonsPage.includes('found_in_yms_extended_period'), 'Run page should show ±2 days diagnostic status')
+assert.ok(comparisonsPage.includes('Дополнительные столбцы'), 'Result viewer should let users add extra columns after a run')
+assert.ok(comparisonsPage.includes('selectedExtraColumns'), 'Result viewer should track selected extra columns dynamically')
+assert.ok(comparisonsPage.includes('availableExtraColumns'), 'Result viewer should derive extra columns from returned row data')
+assert.ok(comparisonsPage.includes('file_data'), 'Result viewer should expose saved Excel row fields as selectable columns')
+assert.ok(comparisonsPage.includes('yms_data'), 'Result viewer should expose YMS booking fields as selectable columns')
 
 const profilesPage = readFileSync(profilesPath, 'utf8')
 assert.ok(profilesPage.includes('Профили сверки'), 'Profiles page should have its own title')

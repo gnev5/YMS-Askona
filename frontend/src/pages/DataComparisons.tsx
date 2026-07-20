@@ -39,6 +39,13 @@ type ComparisonRun = {
   rows?: RunRow[]
 }
 
+type ExtraColumn = {
+  key: string
+  source: 'file' | 'yms'
+  field: string
+  label: string
+}
+
 const statusLabels: Record<string, string> = {
   matched: 'Совпало',
   found_in_yms_extended_period: 'Найдено в YMS в ±2 дня',
@@ -76,6 +83,63 @@ const summaryLabels: Record<string, string> = {
 
 const todayYmd = () => new Date().toISOString().slice(0, 10)
 
+const isPlainRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+)
+
+const extraColumnKey = (source: 'file' | 'yms', field: string) => `${source}:${field}`
+
+const extraColumnLabel = (source: 'file' | 'yms', field: string) => `${source === 'file' ? 'Excel' : 'YMS'}: ${field}`
+
+const collectExtraFields = (value: unknown, fields: Set<string>) => {
+  if (Array.isArray(value)) {
+    value.forEach(item => collectExtraFields(item, fields))
+    return
+  }
+  if (!isPlainRecord(value)) return
+  Object.keys(value).forEach(field => {
+    if (!field || field === 'id' || field === 'transport_sheet') return
+    fields.add(field)
+  })
+}
+
+const buildAvailableExtraColumns = (rows: RunRow[]): ExtraColumn[] => {
+  const fileFields = new Set<string>()
+  const ymsFields = new Set<string>()
+  rows.forEach(row => {
+    collectExtraFields(row.file_data, fileFields)
+    collectExtraFields(row.yms_data, ymsFields)
+  })
+  const columns: ExtraColumn[] = []
+  Array.from(fileFields).sort((a, b) => a.localeCompare(b, 'ru')).forEach(field => {
+    columns.push({ key: extraColumnKey('file', field), source: 'file', field, label: extraColumnLabel('file', field) })
+  })
+  Array.from(ymsFields).sort((a, b) => a.localeCompare(b, 'ru')).forEach(field => {
+    columns.push({ key: extraColumnKey('yms', field), source: 'yms', field, label: extraColumnLabel('yms', field) })
+  })
+  return columns
+}
+
+const formatCellValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '—'
+  if (Array.isArray(value)) {
+    const parts = value.map(formatCellValue).filter(part => part !== '—')
+    return parts.length ? parts.join(', ') : '—'
+  }
+  if (isPlainRecord(value)) return JSON.stringify(value)
+  if (typeof value === 'boolean') return value ? 'Да' : 'Нет'
+  return String(value)
+}
+
+const valueFromExtraColumn = (row: RunRow, column: ExtraColumn): string => {
+  const sourceData = column.source === 'file' ? row.file_data : row.yms_data
+  if (Array.isArray(sourceData)) {
+    return formatCellValue(sourceData.map(item => isPlainRecord(item) ? item[column.field] : undefined))
+  }
+  if (isPlainRecord(sourceData)) return formatCellValue(sourceData[column.field])
+  return '—'
+}
+
 const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const token = useMemo(() => localStorage.getItem('token'), [])
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
@@ -92,6 +156,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
+  const [selectedExtraColumns, setSelectedExtraColumns] = useState<string[]>([])
 
   const loadProfiles = async () => {
     const { data } = await axios.get<Profile[]>(`${API_BASE}/api/data-comparisons/profiles`, { headers })
@@ -147,6 +212,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       formData.append('file', file)
       const { data } = await axios.post<ComparisonRun>(`${API_BASE}/api/data-comparisons/runs`, formData, { headers })
       setSelectedRun(data)
+      setSelectedExtraColumns([])
       setSuccess('Сверка завершена и сохранена в истории')
       await loadRuns()
     } catch (e: any) {
@@ -163,6 +229,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       const { data } = await axios.get<ComparisonRun>(`${API_BASE}/api/data-comparisons/runs/${runId}`, { headers })
       setSelectedRun(data)
       setStatusFilter('')
+      setSelectedExtraColumns([])
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || 'Ошибка открытия сверки')
     } finally {
@@ -172,6 +239,17 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   const visibleRows = (selectedRun?.rows || []).filter(row => !statusFilter || row.status === statusFilter)
   const statuses = Array.from(new Set((selectedRun?.rows || []).map(row => row.status)))
+  const availableExtraColumns = useMemo(
+    () => buildAvailableExtraColumns(selectedRun?.rows || []),
+    [selectedRun]
+  )
+  const activeExtraColumns = availableExtraColumns.filter(column => selectedExtraColumns.includes(column.key))
+  const toggleExtraColumn = (columnKey: string) => {
+    setSelectedExtraColumns(current => current.includes(columnKey)
+      ? current.filter(key => key !== columnKey)
+      : [...current, columnKey]
+    )
+  }
 
   return (
     <div className="page-container">
@@ -236,7 +314,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             ))}
           </div>
 
-          <div style={{ marginTop: 16 }}>
+          <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
             <label>
               Фильтр результата
               <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
@@ -244,6 +322,25 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                 {statuses.map(status => <option key={status} value={status}>{statusLabels[status] || status}</option>)}
               </select>
             </label>
+
+            {availableExtraColumns.length > 0 && (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>Дополнительные столбцы</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {availableExtraColumns.map(column => (
+                    <label key={column.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #d0d5dd', borderRadius: 8, padding: '6px 10px' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedExtraColumns.includes(column.key)}
+                        onChange={() => toggleExtraColumn(column.key)}
+                      />
+                      {column.label}
+                    </label>
+                  ))}
+                </div>
+                <p className="muted" style={{ marginTop: 6 }}>Можно включить данные из сохранённой строки Excel и из найденной записи YMS прямо при просмотре отчёта.</p>
+              </div>
+            )}
           </div>
 
           <div className="table-wrapper" style={{ marginTop: 12 }}>
@@ -254,6 +351,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                   <th>Номер ТЛ</th>
                   <th>Строка файла</th>
                   <th>ID бронирования</th>
+                  {activeExtraColumns.map(column => <th key={column.key}>{column.label}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -263,6 +361,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                     <td>{row.tl_number_normalized}</td>
                     <td>{row.file_row_number || '—'}</td>
                     <td>{row.booking_id || '—'}</td>
+                    {activeExtraColumns.map(column => <td key={column.key}>{valueFromExtraColumn(row, column)}</td>)}
                   </tr>
                 ))}
               </tbody>
