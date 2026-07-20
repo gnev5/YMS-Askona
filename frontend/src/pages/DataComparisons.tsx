@@ -112,6 +112,21 @@ const buildAvailableExtraColumns = (rows: RunRow[]): ExtraColumn[] => (
   )))
 )
 
+const buildAvailableFileColumns = (rows: RunRow[]): ExtraColumn[] => {
+  const seen = new Set<string>()
+  const columns: ExtraColumn[] = []
+  rows.forEach(row => {
+    if (!isPlainRecord(row.file_data)) return
+    Object.keys(row.file_data).forEach(field => {
+      const value = row.file_data?.[field]
+      if (seen.has(field) || value === null || value === undefined || value === '') return
+      seen.add(field)
+      columns.push({ key: field, fields: [field], label: field })
+    })
+  })
+  return columns
+}
+
 const formatCellValue = (value: unknown): string => {
   if (value === null || value === undefined || value === '') return '—'
   if (Array.isArray(value)) {
@@ -141,6 +156,11 @@ const valueFromExtraColumn = (row: RunRow, column: ExtraColumn): string => {
   return formatCellValue(records.map(record => valueFromRecord(record, column)))
 }
 
+const valueFromFileColumn = (row: RunRow, column: ExtraColumn): string => {
+  if (!isPlainRecord(row.file_data)) return '—'
+  return formatCellValue(row.file_data[column.key])
+}
+
 const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const token = useMemo(() => localStorage.getItem('token'), [])
   const headers = token ? { Authorization: `Bearer ${token}` } : {}
@@ -157,8 +177,10 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
-  const [selectedExtraColumns, setSelectedExtraColumns] = useState<string[]>([])
-  const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
+  const [selectedYmsColumns, setSelectedYmsColumns] = useState<string[]>([])
+  const [selectedFileColumns, setSelectedFileColumns] = useState<string[]>([])
+  const [ymsColumnsDropdownOpen, setYmsColumnsDropdownOpen] = useState(false)
+  const [fileColumnsDropdownOpen, setFileColumnsDropdownOpen] = useState(false)
 
   const loadProfiles = async () => {
     const { data } = await axios.get<Profile[]>(`${API_BASE}/api/data-comparisons/profiles`, { headers })
@@ -214,8 +236,10 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       formData.append('file', file)
       const { data } = await axios.post<ComparisonRun>(`${API_BASE}/api/data-comparisons/runs`, formData, { headers })
       setSelectedRun(data)
-      setSelectedExtraColumns([])
-      setColumnsDropdownOpen(false)
+      setSelectedYmsColumns([])
+      setSelectedFileColumns([])
+      setYmsColumnsDropdownOpen(false)
+      setFileColumnsDropdownOpen(false)
       setSuccess('Сверка завершена и сохранена в истории')
       await loadRuns()
     } catch (e: any) {
@@ -232,8 +256,10 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       const { data } = await axios.get<ComparisonRun>(`${API_BASE}/api/data-comparisons/runs/${runId}`, { headers })
       setSelectedRun(data)
       setStatusFilter('')
-      setSelectedExtraColumns([])
-      setColumnsDropdownOpen(false)
+      setSelectedYmsColumns([])
+      setSelectedFileColumns([])
+      setYmsColumnsDropdownOpen(false)
+      setFileColumnsDropdownOpen(false)
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || 'Ошибка открытия сверки')
     } finally {
@@ -243,13 +269,24 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   const visibleRows = (selectedRun?.rows || []).filter(row => !statusFilter || row.status === statusFilter)
   const statuses = Array.from(new Set((selectedRun?.rows || []).map(row => row.status)))
-  const availableExtraColumns = useMemo(
+  const availableYmsColumns = useMemo(
     () => buildAvailableExtraColumns(selectedRun?.rows || []),
     [selectedRun]
   )
-  const activeExtraColumns = availableExtraColumns.filter(column => selectedExtraColumns.includes(column.key))
-  const toggleExtraColumn = (columnKey: string) => {
-    setSelectedExtraColumns(current => current.includes(columnKey)
+  const availableFileColumns = useMemo(
+    () => buildAvailableFileColumns(selectedRun?.rows || []),
+    [selectedRun]
+  )
+  const activeYmsColumns = availableYmsColumns.filter(column => selectedYmsColumns.includes(column.key))
+  const activeFileColumns = availableFileColumns.filter(column => selectedFileColumns.includes(column.key))
+  const toggleYmsColumn = (columnKey: string) => {
+    setSelectedYmsColumns(current => current.includes(columnKey)
+      ? current.filter(key => key !== columnKey)
+      : [...current, columnKey]
+    )
+  }
+  const toggleFileColumn = (columnKey: string) => {
+    setSelectedFileColumns(current => current.includes(columnKey)
       ? current.filter(key => key !== columnKey)
       : [...current, columnKey]
     )
@@ -327,33 +364,63 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
               </select>
             </label>
 
-            {availableExtraColumns.length > 0 && (
-              <div style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => setColumnsDropdownOpen(open => !open)}
-                >
-                  Выбрать столбцы{selectedExtraColumns.length > 0 ? ` (${selectedExtraColumns.length})` : ''}
-                </button>
-                {columnsDropdownOpen && (
-                  <div style={{ position: 'absolute', zIndex: 5, marginTop: 6, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 8, padding: 10, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.12)', minWidth: 240, maxHeight: 320, overflowY: 'auto' }}>
-                    <div style={{ fontWeight: 600, marginBottom: 8 }}>Дополнительные столбцы</div>
-                    {availableExtraColumns.map(column => (
-                      <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedExtraColumns.includes(column.key)}
-                          onChange={() => toggleExtraColumn(column.key)}
-                        />
-                        {column.label}
-                      </label>
-                    ))}
-                    <p className="muted" style={{ marginTop: 8 }}>Доступны только поля, которые используются в таблице «Мои бронирования».</p>
-                  </div>
-                )}
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {availableYmsColumns.length > 0 && (
+                <div style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setYmsColumnsDropdownOpen(open => !open)}
+                  >
+                    Столбцы YMS{selectedYmsColumns.length > 0 ? ` (${selectedYmsColumns.length})` : ''}
+                  </button>
+                  {ymsColumnsDropdownOpen && (
+                    <div style={{ position: 'absolute', zIndex: 5, marginTop: 6, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 8, padding: 10, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.12)', minWidth: 240, maxHeight: 320, overflowY: 'auto' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Столбцы YMS</div>
+                      {availableYmsColumns.map(column => (
+                        <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedYmsColumns.includes(column.key)}
+                            onChange={() => toggleYmsColumn(column.key)}
+                          />
+                          {column.label}
+                        </label>
+                      ))}
+                      <p className="muted" style={{ marginTop: 8 }}>Доступны только поля, которые используются в таблице «Мои бронирования».</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {availableFileColumns.length > 0 && (
+                <div style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setFileColumnsDropdownOpen(open => !open)}
+                  >
+                    Столбцы из файла{selectedFileColumns.length > 0 ? ` (${selectedFileColumns.length})` : ''}
+                  </button>
+                  {fileColumnsDropdownOpen && (
+                    <div style={{ position: 'absolute', zIndex: 5, marginTop: 6, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 8, padding: 10, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.12)', minWidth: 240, maxHeight: 320, overflowY: 'auto' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Столбцы из файла</div>
+                      {availableFileColumns.map(column => (
+                        <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedFileColumns.includes(column.key)}
+                            onChange={() => toggleFileColumn(column.key)}
+                          />
+                          {column.label}
+                        </label>
+                      ))}
+                      <p className="muted" style={{ marginTop: 8 }}>Показываются сохранённые поля из Excel-снимка выбранного профиля.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="table-wrapper" style={{ marginTop: 12 }}>
@@ -364,7 +431,8 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                   <th>Номер ТЛ</th>
                   <th>Строка файла</th>
                   <th>ID бронирования</th>
-                  {activeExtraColumns.map(column => <th key={column.key}>{column.label}</th>)}
+                  {activeYmsColumns.map(column => <th key={`yms-${column.key}`}>{column.label}</th>)}
+                  {activeFileColumns.map(column => <th key={`file-${column.key}`}>{column.label} (файл)</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -374,7 +442,8 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                     <td>{row.tl_number_normalized}</td>
                     <td>{row.file_row_number || '—'}</td>
                     <td>{row.booking_id || '—'}</td>
-                    {activeExtraColumns.map(column => <td key={column.key}>{valueFromExtraColumn(row, column)}</td>)}
+                    {activeYmsColumns.map(column => <td key={`yms-${column.key}`}>{valueFromExtraColumn(row, column)}</td>)}
+                    {activeFileColumns.map(column => <td key={`file-${column.key}`}>{valueFromFileColumn(row, column)}</td>)}
                   </tr>
                 ))}
               </tbody>
