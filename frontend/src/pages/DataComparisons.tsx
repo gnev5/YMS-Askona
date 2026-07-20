@@ -41,8 +41,7 @@ type ComparisonRun = {
 
 type ExtraColumn = {
   key: string
-  source: 'file' | 'yms'
-  field: string
+  fields: string[]
   label: string
 }
 
@@ -87,38 +86,31 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
 )
 
-const extraColumnKey = (source: 'file' | 'yms', field: string) => `${source}:${field}`
+const myBookingExtraColumns: ExtraColumn[] = [
+  { key: 'booking_date', fields: ['booking_date'], label: 'Дата' },
+  { key: 'booking_time', fields: ['start_time', 'end_time'], label: 'Время' },
+  { key: 'dock_name', fields: ['dock_name'], label: 'Док' },
+  { key: 'object_name', fields: ['object_name'], label: 'Объект' },
+  { key: 'vehicle_type_name', fields: ['vehicle_type_name'], label: 'Тип ТС' },
+  { key: 'supplier_name', fields: ['supplier_name'], label: 'Поставщик' },
+  { key: 'zone_name', fields: ['zone_name'], label: 'Зона' },
+  { key: 'transport_type_name', fields: ['transport_type_name'], label: 'Тип перевозки' },
+  { key: 'cubes', fields: ['cubes'], label: 'Кубы' },
+  { key: 'status', fields: ['status'], label: 'Статус YMS' },
+  { key: 'user_full_name', fields: ['user_full_name', 'user_email', 'user_login'], label: 'Пользователь' },
+]
 
-const extraColumnLabel = (source: 'file' | 'yms', field: string) => `${source === 'file' ? 'Excel' : 'YMS'}: ${field}`
-
-const collectExtraFields = (value: unknown, fields: Set<string>) => {
-  if (Array.isArray(value)) {
-    value.forEach(item => collectExtraFields(item, fields))
-    return
-  }
-  if (!isPlainRecord(value)) return
-  Object.keys(value).forEach(field => {
-    if (!field || field === 'id' || field === 'transport_sheet') return
-    fields.add(field)
-  })
+const ymsRecordsFromRow = (row: RunRow): Record<string, unknown>[] => {
+  if (Array.isArray(row.yms_data)) return row.yms_data.filter(isPlainRecord)
+  if (isPlainRecord(row.yms_data)) return [row.yms_data]
+  return []
 }
 
-const buildAvailableExtraColumns = (rows: RunRow[]): ExtraColumn[] => {
-  const fileFields = new Set<string>()
-  const ymsFields = new Set<string>()
-  rows.forEach(row => {
-    collectExtraFields(row.file_data, fileFields)
-    collectExtraFields(row.yms_data, ymsFields)
-  })
-  const columns: ExtraColumn[] = []
-  Array.from(fileFields).sort((a, b) => a.localeCompare(b, 'ru')).forEach(field => {
-    columns.push({ key: extraColumnKey('file', field), source: 'file', field, label: extraColumnLabel('file', field) })
-  })
-  Array.from(ymsFields).sort((a, b) => a.localeCompare(b, 'ru')).forEach(field => {
-    columns.push({ key: extraColumnKey('yms', field), source: 'yms', field, label: extraColumnLabel('yms', field) })
-  })
-  return columns
-}
+const buildAvailableExtraColumns = (rows: RunRow[]): ExtraColumn[] => (
+  myBookingExtraColumns.filter(column => rows.some(row => (
+    ymsRecordsFromRow(row).some(record => column.fields.some(field => record[field] !== null && record[field] !== undefined && record[field] !== ''))
+  )))
+)
 
 const formatCellValue = (value: unknown): string => {
   if (value === null || value === undefined || value === '') return '—'
@@ -131,13 +123,22 @@ const formatCellValue = (value: unknown): string => {
   return String(value)
 }
 
-const valueFromExtraColumn = (row: RunRow, column: ExtraColumn): string => {
-  const sourceData = column.source === 'file' ? row.file_data : row.yms_data
-  if (Array.isArray(sourceData)) {
-    return formatCellValue(sourceData.map(item => isPlainRecord(item) ? item[column.field] : undefined))
+const valueFromRecord = (record: Record<string, unknown>, column: ExtraColumn): string => {
+  if (column.key === 'booking_time') {
+    const start = formatCellValue(record.start_time).slice(0, 5)
+    const end = formatCellValue(record.end_time).slice(0, 5)
+    if (start === '—' && end === '—') return '—'
+    return `${start}${end !== '—' ? ` - ${end}` : ''}`
   }
-  if (isPlainRecord(sourceData)) return formatCellValue(sourceData[column.field])
-  return '—'
+  if (column.key === 'status') return statusLabels[String(record.status || '')] || formatCellValue(record.status)
+  const value = column.fields.map(field => record[field]).find(fieldValue => fieldValue !== null && fieldValue !== undefined && fieldValue !== '')
+  return formatCellValue(value)
+}
+
+const valueFromExtraColumn = (row: RunRow, column: ExtraColumn): string => {
+  const records = ymsRecordsFromRow(row)
+  if (records.length === 0) return '—'
+  return formatCellValue(records.map(record => valueFromRecord(record, column)))
 }
 
 const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
@@ -157,6 +158,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [success, setSuccess] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedExtraColumns, setSelectedExtraColumns] = useState<string[]>([])
+  const [columnsDropdownOpen, setColumnsDropdownOpen] = useState(false)
 
   const loadProfiles = async () => {
     const { data } = await axios.get<Profile[]>(`${API_BASE}/api/data-comparisons/profiles`, { headers })
@@ -213,6 +215,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       const { data } = await axios.post<ComparisonRun>(`${API_BASE}/api/data-comparisons/runs`, formData, { headers })
       setSelectedRun(data)
       setSelectedExtraColumns([])
+      setColumnsDropdownOpen(false)
       setSuccess('Сверка завершена и сохранена в истории')
       await loadRuns()
     } catch (e: any) {
@@ -230,6 +233,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       setSelectedRun(data)
       setStatusFilter('')
       setSelectedExtraColumns([])
+      setColumnsDropdownOpen(false)
     } catch (e: any) {
       setError(e.response?.data?.detail || e.message || 'Ошибка открытия сверки')
     } finally {
@@ -324,21 +328,30 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             </label>
 
             {availableExtraColumns.length > 0 && (
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Дополнительные столбцы</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {availableExtraColumns.map(column => (
-                    <label key={column.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid #d0d5dd', borderRadius: 8, padding: '6px 10px' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedExtraColumns.includes(column.key)}
-                        onChange={() => toggleExtraColumn(column.key)}
-                      />
-                      {column.label}
-                    </label>
-                  ))}
-                </div>
-                <p className="muted" style={{ marginTop: 6 }}>Можно включить данные из сохранённой строки Excel и из найденной записи YMS прямо при просмотре отчёта.</p>
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setColumnsDropdownOpen(open => !open)}
+                >
+                  Выбрать столбцы{selectedExtraColumns.length > 0 ? ` (${selectedExtraColumns.length})` : ''}
+                </button>
+                {columnsDropdownOpen && (
+                  <div style={{ position: 'absolute', zIndex: 5, marginTop: 6, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 8, padding: 10, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.12)', minWidth: 240, maxHeight: 320, overflowY: 'auto' }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>Дополнительные столбцы</div>
+                    {availableExtraColumns.map(column => (
+                      <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedExtraColumns.includes(column.key)}
+                          onChange={() => toggleExtraColumn(column.key)}
+                        />
+                        {column.label}
+                      </label>
+                    ))}
+                    <p className="muted" style={{ marginTop: 8 }}>Доступны только поля, которые используются в таблице «Мои бронирования».</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
