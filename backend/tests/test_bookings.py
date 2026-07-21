@@ -519,23 +519,25 @@ def test_bookings_export_adds_production_and_purchased_summary_sheets(test_clien
 
     wb = load_workbook(BytesIO(response.content))
     assert "Собственное производство" in wb.sheetnames
-    assert "Закупная" in wb.sheetnames
+    assert "Закупная" not in wb.sheetnames
 
     own_ws = wb["Собственное производство"]
-    assert [cell.value for cell in own_ws[1]] == ["Направление", "2026-01-10", "2026-01-11", "Общий итог"]
+    assert [cell.value for cell in own_ws[1]] == [
+        "Дата",
+        "Лопатина",
+        "Почаевский",
+        "Солвис",
+        "Софт Слип",
+        "Социалистическая",
+        "ЦРСГП",
+        "Закупная",
+        "Общий итог",
+    ]
     own_rows = {row[0]: row[1:] for row in own_ws.iter_rows(min_row=2, values_only=True)}
-    assert own_rows["Лопатина"] == (38, 38, 76)
-    assert own_rows["Почаевский"] == (64, 0, 64)
-    assert own_rows["Софт Слип"] == (0, 75, 75)
-    assert own_rows["Социалистическая"] == (0, 0, 0)
-    assert own_rows["ЦРСГП"] == (0, 0, 0)
-    assert own_rows["Общий итог"] == (102, 113, 215)
+    assert own_rows["2026-01-10"] == (38, 64, 0, 0, 0, 0, 10, 112)
+    assert own_rows["2026-01-11"] == (38, 0, 0, 75, 0, 0, 12, 125)
+    assert own_rows["Общий итог"] == (76, 64, 0, 75, 0, 0, 22, 237)
     assert "Картон служебный" not in own_rows
-
-    purchased_ws = wb["Закупная"]
-    assert [cell.value for cell in purchased_ws[1]] == ["Тип перевозки", "2026-01-10", "2026-01-11", "Общий итог"]
-    purchased_rows = {row[0]: row[1:] for row in purchased_ws.iter_rows(min_row=2, values_only=True)}
-    assert purchased_rows["Закупная"] == (10, 12, 22)
 
 
 

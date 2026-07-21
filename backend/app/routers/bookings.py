@@ -103,33 +103,42 @@ def _report_cell_number(value: float):
     return int(value) if float(value).is_integer() else value
 
 
-def _append_summary_table(ws, first_column_label: str, rows: list[tuple[str, dict[date, float]]], report_dates: list[date]):
-    header = [first_column_label, *[d.isoformat() for d in report_dates], "Общий итог"]
+def _append_report_matrix_table(ws, column_labels: list[str], values_by_date_and_column: dict[date, dict[str, float]]) -> None:
+    ordered_dates = sorted(values_by_date_and_column)
+    header = ["Дата", *column_labels, "Общий итог"]
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
         cell.fill = EXPORT_SUMMARY_HEADER_FILL
 
-    for label, values_by_date in rows:
-        total = sum(values_by_date.values())
+    grand_total_by_column = defaultdict(float)
+    for report_date in ordered_dates:
+        values_by_column = values_by_date_and_column[report_date]
+        row_values = [_report_cell_number(values_by_column.get(label, 0)) for label in column_labels]
+        row_total = sum(values_by_column.values())
+        for label, value in values_by_column.items():
+            grand_total_by_column[label] += value
         ws.append([
-            label,
-            *[_report_cell_number(values_by_date.get(report_date, 0)) for report_date in report_dates],
-            _report_cell_number(total),
+            report_date.isoformat(),
+            *row_values,
+            _report_cell_number(row_total),
         ])
 
+    ws.append([
+        "Общий итог",
+        *[_report_cell_number(grand_total_by_column.get(label, 0)) for label in column_labels],
+        _report_cell_number(sum(grand_total_by_column.values())),
+    ])
+
     ws.freeze_panes = "B2"
-    ws.column_dimensions["A"].width = max(len(first_column_label), 24)
+    ws.column_dimensions["A"].width = 14
     for idx in range(2, len(header) + 1):
-        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = 14
+        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = 18
 
 
 def _append_bookings_report_sheets(wb: Workbook, serialized_rows: list[dict]) -> None:
-    own_totals: dict[str, dict[date, float]] = {
-        label: defaultdict(float) for label in OWN_PRODUCTION_REPORT_ROWS
-    }
-    purchased_totals: dict[str, dict[date, float]] = {"Закупная": defaultdict(float)}
-    report_dates: set[date] = set()
+    report_columns = [*OWN_PRODUCTION_REPORT_ROWS, "Закупная"]
+    values_by_date_and_column: dict[date, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     for serialized in serialized_rows:
         report_date = _parse_report_booking_date(serialized)
@@ -144,28 +153,14 @@ def _append_bookings_report_sheets(wb: Workbook, serialized_rows: list[dict]) ->
             cubes = OWN_PRODUCTION_FIXED_CUBES.get(direction)
             if cubes is None:
                 cubes = _report_number(serialized.get("cubes"))
-            own_totals[direction][report_date] += cubes
-            report_dates.add(report_date)
+            values_by_date_and_column[report_date][direction] += cubes
             continue
 
         if _is_purchased_report_row(transport_type_name):
-            purchased_totals["Закупная"][report_date] += _report_number(serialized.get("cubes"))
-            report_dates.add(report_date)
-
-    ordered_dates = sorted(report_dates)
-
-    own_rows = [(label, own_totals[label]) for label in OWN_PRODUCTION_REPORT_ROWS]
-    own_grand_total = defaultdict(float)
-    for _label, values_by_date in own_rows:
-        for report_date, value in values_by_date.items():
-            own_grand_total[report_date] += value
-    own_rows.append(("Общий итог", own_grand_total))
+            values_by_date_and_column[report_date]["Закупная"] += _report_number(serialized.get("cubes"))
 
     own_ws = wb.create_sheet(title="Собственное производство")
-    _append_summary_table(own_ws, "Направление", own_rows, ordered_dates)
-
-    purchased_ws = wb.create_sheet(title="Закупная")
-    _append_summary_table(purchased_ws, "Тип перевозки", [("Закупная", purchased_totals["Закупная"])], ordered_dates)
+    _append_report_matrix_table(own_ws, report_columns, values_by_date_and_column)
 
 
 def _dock_matches_supplier_zone(dock: models.Dock, supplier_zone_id: int | None) -> bool:
