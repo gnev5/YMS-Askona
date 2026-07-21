@@ -45,6 +45,14 @@ type ExtraColumn = {
   label: string
 }
 
+type ResultColumn = {
+  key: string
+  label: string
+  render: (row: RunRow) => React.ReactNode
+}
+
+const defaultResultColumnKeys = ['status', 'tl_number', 'file_row', 'booking_id']
+
 const statusLabels: Record<string, string> = {
   matched: 'Совпало',
   found_in_yms_extended_period: 'Найдено в YMS в ±2 дня',
@@ -179,6 +187,9 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedYmsColumns, setSelectedYmsColumns] = useState<string[]>([])
   const [selectedFileColumns, setSelectedFileColumns] = useState<string[]>([])
+  const [resultColumnOrder, setResultColumnOrder] = useState<string[]>(defaultResultColumnKeys)
+  const [draggedColumnKey, setDraggedColumnKey] = useState<string | null>(null)
+  const [dragOverColumnKey, setDragOverColumnKey] = useState<string | null>(null)
   const [ymsColumnsDropdownOpen, setYmsColumnsDropdownOpen] = useState(false)
   const [fileColumnsDropdownOpen, setFileColumnsDropdownOpen] = useState(false)
 
@@ -238,6 +249,9 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       setSelectedRun(data)
       setSelectedYmsColumns([])
       setSelectedFileColumns([])
+      setResultColumnOrder(defaultResultColumnKeys)
+      setDraggedColumnKey(null)
+      setDragOverColumnKey(null)
       setYmsColumnsDropdownOpen(false)
       setFileColumnsDropdownOpen(false)
       setSuccess('Сверка завершена и сохранена в истории')
@@ -258,6 +272,9 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       setStatusFilter('')
       setSelectedYmsColumns([])
       setSelectedFileColumns([])
+      setResultColumnOrder(defaultResultColumnKeys)
+      setDraggedColumnKey(null)
+      setDragOverColumnKey(null)
       setYmsColumnsDropdownOpen(false)
       setFileColumnsDropdownOpen(false)
     } catch (e: any) {
@@ -277,8 +294,69 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
     () => buildAvailableFileColumns(selectedRun?.rows || []),
     [selectedRun]
   )
-  const activeYmsColumns = availableYmsColumns.filter(column => selectedYmsColumns.includes(column.key))
-  const activeFileColumns = availableFileColumns.filter(column => selectedFileColumns.includes(column.key))
+  const activeYmsColumns = useMemo(() => selectedYmsColumns
+    .map(key => availableYmsColumns.find(column => column.key === key))
+    .filter((column): column is ExtraColumn => Boolean(column)), [selectedYmsColumns, availableYmsColumns])
+  const activeFileColumns = useMemo(() => selectedFileColumns
+    .map(key => availableFileColumns.find(column => column.key === key))
+    .filter((column): column is ExtraColumn => Boolean(column)), [selectedFileColumns, availableFileColumns])
+  const resultColumns = useMemo<ResultColumn[]>(() => {
+    const columns: ResultColumn[] = [
+      { key: 'status', label: 'Статус', render: row => statusLabels[row.status] || row.status },
+      { key: 'tl_number', label: 'Номер ТЛ', render: row => row.tl_number_normalized },
+      { key: 'file_row', label: 'Строка файла', render: row => row.file_row_number || '—' },
+      { key: 'booking_id', label: 'ID бронирования', render: row => row.booking_id || '—' },
+      ...activeYmsColumns.map(column => ({
+        key: `yms-${column.key}`,
+        label: column.label,
+        render: (row: RunRow) => valueFromExtraColumn(row, column),
+      })),
+      ...activeFileColumns.map(column => ({
+        key: `file-${column.key}`,
+        label: `${column.label} (файл)`,
+        render: (row: RunRow) => valueFromFileColumn(row, column),
+      })),
+    ]
+    const byKey = new Map(columns.map(column => [column.key, column]))
+    const orderedKeys = [
+      ...resultColumnOrder.filter(key => byKey.has(key)),
+      ...columns.map(column => column.key).filter(key => !resultColumnOrder.includes(key)),
+    ]
+    return orderedKeys.map(key => byKey.get(key)).filter((column): column is ResultColumn => Boolean(column))
+  }, [activeYmsColumns, activeFileColumns, resultColumnOrder])
+
+  useEffect(() => {
+    const availableKeys = [
+      ...defaultResultColumnKeys,
+      ...activeYmsColumns.map(column => `yms-${column.key}`),
+      ...activeFileColumns.map(column => `file-${column.key}`),
+    ]
+    setResultColumnOrder(current => {
+      const next = [
+        ...current.filter(key => availableKeys.includes(key)),
+        ...availableKeys.filter(key => !current.includes(key)),
+      ]
+      return next.length === current.length && next.every((key, index) => key === current[index]) ? current : next
+    })
+  }, [activeYmsColumns, activeFileColumns])
+
+  const moveResultColumn = (sourceKey: string, targetKey: string) => {
+    if (sourceKey === targetKey) return
+    setResultColumnOrder(current => {
+      const currentKeys = resultColumns.map(column => column.key)
+      const order = [
+        ...current.filter(key => currentKeys.includes(key)),
+        ...currentKeys.filter(key => !current.includes(key)),
+      ]
+      const sourceIndex = order.indexOf(sourceKey)
+      const targetIndex = order.indexOf(targetKey)
+      if (sourceIndex === -1 || targetIndex === -1) return current
+      const next = [...order]
+      const [moved] = next.splice(sourceIndex, 1)
+      next.splice(targetIndex, 0, moved)
+      return next
+    })
+  }
   const toggleYmsColumn = (columnKey: string) => {
     setSelectedYmsColumns(current => current.includes(columnKey)
       ? current.filter(key => key !== columnKey)
@@ -294,20 +372,32 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
 
   return (
     <div className="page-container">
-      <div className="page-header">
-        {onBack && <button className="secondary" onClick={onBack}>← Назад</button>}
-        <div>
+      <div className="comparison-hero">
+        <div className="comparison-hero__content">
+          {onBack && <button className="secondary comparison-back" onClick={onBack}>← Назад</button>}
+          <span className="comparison-eyebrow">Контроль данных</span>
           <h1>Сверка данных</h1>
-          <p className="muted">Выберите профиль сверки, период, строки файла и Excel-файл. Профили настраиваются в отдельном разделе «Профили сверки».</p>
+          <p>Запускайте проверку Excel против YMS, быстро разбирайте расхождения и настраивайте вид таблицы под текущий сценарий.</p>
+        </div>
+        <div className="comparison-hero__panel">
+          <span>Период проверки</span>
+          <strong>{dateFrom} — {dateTo}</strong>
+          <small>Профили настраиваются отдельно в разделе «Профили сверки».</small>
         </div>
       </div>
 
       {error && <div className="error">{error}</div>}
       {success && <div className="success">{success}</div>}
 
-      <section className="card">
-        <h2>Новая сверка</h2>
-        <form onSubmit={submitRun} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 2fr auto', gap: 12, alignItems: 'end' }}>
+      <section className="card comparison-run-card">
+        <div className="comparison-section-title">
+          <div>
+            <span className="comparison-eyebrow">Запуск</span>
+            <h2>Новая сверка</h2>
+          </div>
+          <span className="comparison-soft-badge">Excel .xlsx</span>
+        </div>
+        <form onSubmit={submitRun} className="comparison-run-form">
           <label>
             Профиль сверки
             <select value={profileId} onChange={e => setProfileId(e.target.value)}>
@@ -341,11 +431,17 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       </section>
 
       {selectedRun && (
-        <section className="card">
-          <h2>Результат сверки #{selectedRun.id}</h2>
-          <p className="muted">
-            {selectedRun.profile_name} · {selectedRun.date_from} — {selectedRun.date_to} · файл {selectedRun.source_file_name}. Доп. проверка: {selectedRun.extended_date_from} — {selectedRun.extended_date_to}
-          </p>
+        <section className="card comparison-result-card">
+          <div className="comparison-section-title">
+            <div>
+              <span className="comparison-eyebrow">Результаты</span>
+              <h2>Результат сверки #{selectedRun.id}</h2>
+              <p className="muted">
+                {selectedRun.profile_name} · {selectedRun.date_from} — {selectedRun.date_to} · файл {selectedRun.source_file_name}. Доп. проверка: {selectedRun.extended_date_from} — {selectedRun.extended_date_to}
+              </p>
+            </div>
+            <span className="comparison-soft-badge">{visibleRows.length} строк</span>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
             {summaryOrder.map(key => (
               <div key={key} className="stat-card">
@@ -355,8 +451,8 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             ))}
           </div>
 
-          <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
-            <label>
+          <div className="comparison-toolbar">
+            <label className="comparison-filter">
               Фильтр результата
               <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                 <option value="">Все статусы</option>
@@ -364,9 +460,9 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
               </select>
             </label>
 
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div className="comparison-column-actions">
               {availableYmsColumns.length > 0 && (
-                <div style={{ position: 'relative' }}>
+                <div className="comparison-column-picker">
                   <button
                     type="button"
                     className="secondary"
@@ -375,10 +471,10 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                     Столбцы YMS{selectedYmsColumns.length > 0 ? ` (${selectedYmsColumns.length})` : ''}
                   </button>
                   {ymsColumnsDropdownOpen && (
-                    <div style={{ position: 'absolute', zIndex: 5, marginTop: 6, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 8, padding: 10, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.12)', minWidth: 240, maxHeight: 320, overflowY: 'auto' }}>
-                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Столбцы YMS</div>
+                    <div className="comparison-column-menu">
+                      <div className="comparison-column-menu__title">Столбцы YMS</div>
                       {availableYmsColumns.map(column => (
-                        <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                        <label key={column.key}>
                           <input
                             type="checkbox"
                             checked={selectedYmsColumns.includes(column.key)}
@@ -387,14 +483,14 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                           {column.label}
                         </label>
                       ))}
-                      <p className="muted" style={{ marginTop: 8 }}>Доступны только поля, которые используются в таблице «Мои бронирования».</p>
+                      <p className="muted">Доступны только поля, которые используются в таблице «Мои бронирования».</p>
                     </div>
                   )}
                 </div>
               )}
 
               {availableFileColumns.length > 0 && (
-                <div style={{ position: 'relative' }}>
+                <div className="comparison-column-picker">
                   <button
                     type="button"
                     className="secondary"
@@ -403,10 +499,10 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                     Столбцы из файла{selectedFileColumns.length > 0 ? ` (${selectedFileColumns.length})` : ''}
                   </button>
                   {fileColumnsDropdownOpen && (
-                    <div style={{ position: 'absolute', zIndex: 5, marginTop: 6, background: '#fff', border: '1px solid #d0d5dd', borderRadius: 8, padding: 10, boxShadow: '0 12px 24px rgba(15, 23, 42, 0.12)', minWidth: 240, maxHeight: 320, overflowY: 'auto' }}>
-                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Столбцы из файла</div>
+                    <div className="comparison-column-menu">
+                      <div className="comparison-column-menu__title">Столбцы из файла</div>
                       {availableFileColumns.map(column => (
-                        <label key={column.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                        <label key={column.key}>
                           <input
                             type="checkbox"
                             checked={selectedFileColumns.includes(column.key)}
@@ -415,35 +511,58 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                           {column.label}
                         </label>
                       ))}
-                      <p className="muted" style={{ marginTop: 8 }}>Показываются сохранённые поля из Excel-снимка выбранного профиля.</p>
+                      <p className="muted">Показываются сохранённые поля из Excel-снимка выбранного профиля.</p>
                     </div>
                   )}
                 </div>
               )}
             </div>
+            <div className="comparison-drag-hint">Перетащите заголовок столбца, чтобы поменять порядок колонок в таблице.</div>
           </div>
 
-          <div className="table-wrapper" style={{ marginTop: 12 }}>
-            <table>
+          <div className="table-wrapper comparison-table-shell">
+            <table className="comparison-result-table">
               <thead>
                 <tr>
-                  <th>Статус</th>
-                  <th>Номер ТЛ</th>
-                  <th>Строка файла</th>
-                  <th>ID бронирования</th>
-                  {activeYmsColumns.map(column => <th key={`yms-${column.key}`}>{column.label}</th>)}
-                  {activeFileColumns.map(column => <th key={`file-${column.key}`}>{column.label} (файл)</th>)}
+                  {resultColumns.map(column => (
+                    <th
+                      key={column.key}
+                      draggable
+                      className={`${draggedColumnKey === column.key ? 'is-dragging' : ''} ${dragOverColumnKey === column.key ? 'is-drag-over' : ''}`}
+                      title="Перетащите, чтобы изменить порядок столбцов"
+                      onDragStart={event => {
+                        event.dataTransfer.effectAllowed = 'move'
+                        event.dataTransfer.setData('text/plain', column.key)
+                        setDraggedColumnKey(column.key)
+                      }}
+                      onDragOver={event => {
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                        setDragOverColumnKey(column.key)
+                      }}
+                      onDragLeave={() => setDragOverColumnKey(current => current === column.key ? null : current)}
+                      onDrop={event => {
+                        event.preventDefault()
+                        const sourceKey = event.dataTransfer.getData('text/plain') || draggedColumnKey
+                        if (sourceKey) moveResultColumn(sourceKey, column.key)
+                        setDraggedColumnKey(null)
+                        setDragOverColumnKey(null)
+                      }}
+                      onDragEnd={() => {
+                        setDraggedColumnKey(null)
+                        setDragOverColumnKey(null)
+                      }}
+                    >
+                      <span className="comparison-drag-handle">⋮⋮</span>
+                      {column.label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {visibleRows.map(row => (
                   <tr key={row.id}>
-                    <td>{statusLabels[row.status] || row.status}</td>
-                    <td>{row.tl_number_normalized}</td>
-                    <td>{row.file_row_number || '—'}</td>
-                    <td>{row.booking_id || '—'}</td>
-                    {activeYmsColumns.map(column => <td key={`yms-${column.key}`}>{valueFromExtraColumn(row, column)}</td>)}
-                    {activeFileColumns.map(column => <td key={`file-${column.key}`}>{valueFromFileColumn(row, column)}</td>)}
+                    {resultColumns.map(column => <td key={`${row.id}-${column.key}`}>{column.render(row)}</td>)}
                   </tr>
                 ))}
               </tbody>
