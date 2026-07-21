@@ -3,7 +3,7 @@ from datetime import date, time, timedelta
 from io import BytesIO
 
 from fastapi.testclient import TestClient
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -161,3 +161,88 @@ def test_export_bookings_start_end_variant(test_client, db_session, test_user_fi
         "Export Zone",
         "Export Transport",
     ]
+
+
+def test_bookings_export_adds_production_report_matrix_sheet():
+    from app.routers.bookings import _append_bookings_report_sheets
+
+    wb = Workbook()
+    wb.active.title = "bookings"
+    _append_bookings_report_sheets(wb, [
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "21:00:00",
+            "supplier_name": "Литвуд Лопатина 5",
+            "transport_type_name": "собственное производство",
+            "cubes": 1,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "22:30:00",
+            "supplier_name": "Литвуд Лопатина 9",
+            "transport_type_name": "собственное производство",
+            "cubes": 1,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "20:00:00",
+            "supplier_name": "Почайка паллеты",
+            "transport_type_name": "собственное производство",
+            "cubes": 1,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "23:00:00",
+            "supplier_name": "Софт Слип (Ковров)",
+            "transport_type_name": "собственное производство",
+            "cubes": 75,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "19:00:00",
+            "supplier_name": "Картон служебный",
+            "transport_type_name": "собственное производство",
+            "cubes": 999,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "17:00:00",
+            "supplier_name": "Литвуд Лопатина 5",
+            "transport_type_name": "магистраль",
+            "cubes": 999,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "18:00:00",
+            "supplier_name": "Поставщик А",
+            "transport_type_name": "закупная",
+            "cubes": 10,
+        },
+        {
+            "booking_date": "2026-01-10",
+            "start_time": "22:00:00",
+            "supplier_name": "Поставщик Б",
+            "transport_type_name": "закупная",
+            "cubes": 12,
+        },
+    ])
+
+    assert "Собственное производство" in wb.sheetnames
+    assert "Закупная" not in wb.sheetnames
+    own_ws = wb["Собственное производство"]
+    assert [cell.value for cell in own_ws[1]] == [
+        "Дата",
+        "Лопатина",
+        "Почаевский",
+        "Солвис",
+        "Софт Слип",
+        "Социалистическая",
+        "ЦРСГП",
+        "Закупная",
+        "Общий итог",
+    ]
+    own_rows = {row[0]: row[1:] for row in own_ws.iter_rows(min_row=2, values_only=True)}
+    assert own_rows["2026-01-10"] == (38, 64, 0, 0, 0, 0, 10, 112)
+    assert own_rows["2026-01-11"] == (38, 0, 0, 75, 0, 0, 12, 125)
+    assert own_rows["Общий итог"] == (76, 64, 0, 75, 0, 0, 22, 237)
+    assert "Картон служебный" not in own_rows
