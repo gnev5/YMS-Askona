@@ -960,6 +960,8 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Пользователь</th>
 
+                <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>ID бронирования</th>
+
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e5e7eb' }}>Действия</th>
 
               </tr>
@@ -1010,6 +1012,8 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
                   <td style={{ padding: 8 }}>{formatStatus(b.status)}</td>
 
                   <td style={{ padding: 8 }}>{b.user_full_name || b.user_email || b.user_login || '-'}</td>
+
+                  <td style={{ padding: 8 }}>{b.id}</td>
 
                   <td style={{ padding: 8 }}>
 

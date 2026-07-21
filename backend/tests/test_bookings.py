@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from datetime import date, time
+from datetime import date, time, datetime
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -359,6 +359,184 @@ def test_cancelled_booking_remains_in_my_bookings_and_slot_can_be_rebooked(test_
         "driver_phone": "67890",
     })
     assert rebook_response.status_code == 200, rebook_response.text
+
+
+def _create_export_report_booking(
+    db_session,
+    user,
+    *,
+    supplier_name: str,
+    transport_type_name: str,
+    transport_enum: models.TransportType,
+    slot_date: date,
+    start: time,
+    end: time,
+    cubes: float | None,
+):
+    suffix = f"{supplier_name}-{transport_type_name}-{start.strftime('%H%M')}"[:60]
+    obj = models.Object(name=f"Object {suffix}", object_type="warehouse", capacity_in=10, capacity_out=10)
+    zone = models.Zone(name=f"Zone {suffix}")
+    vehicle_type = models.VehicleType(name=f"Vehicle {suffix}", duration_minutes=30)
+    transport_type = db_session.query(models.TransportTypeRef).filter(
+        models.TransportTypeRef.name == transport_type_name
+    ).first()
+    if transport_type is None:
+        transport_type = models.TransportTypeRef(name=transport_type_name, enum_value=transport_enum)
+        db_session.add(transport_type)
+    db_session.add_all([obj, zone, vehicle_type])
+    db_session.commit()
+
+    supplier = models.Supplier(name=supplier_name, zone_id=zone.id)
+    db_session.add(supplier)
+    db_session.commit()
+
+    dock = models.Dock(name=f"Dock {suffix}", dock_type="entrance", object_id=obj.id)
+    db_session.add(dock)
+    db_session.commit()
+
+    slot = models.TimeSlot(dock_id=dock.id, slot_date=slot_date, start_time=start, end_time=end, capacity=2)
+    db_session.add(slot)
+    db_session.commit()
+
+    booking = models.Booking(
+        user_id=user.id,
+        vehicle_type_id=vehicle_type.id,
+        vehicle_plate=f"PLATE-{start.strftime('%H%M')}",
+        driver_full_name="Report Driver",
+        driver_phone="12345",
+        supplier_id=supplier.id,
+        zone_id=zone.id,
+        transport_type_id=transport_type.id,
+        cubes=cubes,
+        transport_sheet=f"TL-{start.strftime('%H%M')}",
+        booking_type=models.BookingDirection.inbound,
+        status="confirmed",
+        created_at=datetime(2026, 1, 1, 10, 0),
+    )
+    db_session.add(booking)
+    db_session.commit()
+    db_session.add(models.BookingTimeSlot(booking_id=booking.id, time_slot_id=slot.id))
+    db_session.commit()
+    db_session.refresh(booking)
+    return booking
+
+
+def test_bookings_export_adds_production_and_purchased_summary_sheets(test_client, db_session, test_user_fixture):
+    base_date = date(2026, 1, 10)
+    bookings = [
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Литвуд Лопатина 5",
+            transport_type_name="собственное производство",
+            transport_enum=models.TransportType.own_production,
+            slot_date=base_date,
+            start=time(21, 0),
+            end=time(21, 30),
+            cubes=1,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Литвуд Лопатина 9",
+            transport_type_name="собственное производство",
+            transport_enum=models.TransportType.own_production,
+            slot_date=base_date,
+            start=time(22, 30),
+            end=time(23, 0),
+            cubes=1,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Почайка паллеты",
+            transport_type_name="собственное производство",
+            transport_enum=models.TransportType.own_production,
+            slot_date=base_date,
+            start=time(20, 0),
+            end=time(20, 30),
+            cubes=1,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Софт Слип (Ковров)",
+            transport_type_name="собственное производство",
+            transport_enum=models.TransportType.own_production,
+            slot_date=base_date,
+            start=time(23, 0),
+            end=time(23, 30),
+            cubes=75,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Картон служебный",
+            transport_type_name="собственное производство",
+            transport_enum=models.TransportType.own_production,
+            slot_date=base_date,
+            start=time(19, 0),
+            end=time(19, 30),
+            cubes=999,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Литвуд Лопатина 5",
+            transport_type_name="магистраль",
+            transport_enum=models.TransportType.own_production,
+            slot_date=base_date,
+            start=time(17, 0),
+            end=time(17, 30),
+            cubes=999,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Поставщик А",
+            transport_type_name="закупная",
+            transport_enum=models.TransportType.purchased,
+            slot_date=base_date,
+            start=time(18, 0),
+            end=time(18, 30),
+            cubes=10,
+        ),
+        _create_export_report_booking(
+            db_session,
+            test_user_fixture,
+            supplier_name="Поставщик Б",
+            transport_type_name="закупная",
+            transport_enum=models.TransportType.purchased,
+            slot_date=base_date,
+            start=time(22, 0),
+            end=time(22, 30),
+            cubes=12,
+        ),
+    ]
+
+    response = test_client.post("/api/bookings/export/xlsx", json=[booking.id for booking in bookings])
+    assert response.status_code == 200, response.text
+
+    wb = load_workbook(BytesIO(response.content))
+    assert "Собственное производство" in wb.sheetnames
+    assert "Закупная" in wb.sheetnames
+
+    own_ws = wb["Собственное производство"]
+    assert [cell.value for cell in own_ws[1]] == ["Направление", "2026-01-10", "2026-01-11", "Общий итог"]
+    own_rows = {row[0]: row[1:] for row in own_ws.iter_rows(min_row=2, values_only=True)}
+    assert own_rows["Лопатина"] == (38, 38, 76)
+    assert own_rows["Почаевский"] == (64, 0, 64)
+    assert own_rows["Софт Слип"] == (0, 75, 75)
+    assert own_rows["Социалистическая"] == (0, 0, 0)
+    assert own_rows["ЦРСГП"] == (0, 0, 0)
+    assert own_rows["Общий итог"] == (102, 113, 215)
+    assert "Картон служебный" not in own_rows
+
+    purchased_ws = wb["Закупная"]
+    assert [cell.value for cell in purchased_ws[1]] == ["Тип перевозки", "2026-01-10", "2026-01-11", "Общий итог"]
+    purchased_rows = {row[0]: row[1:] for row in purchased_ws.iter_rows(min_row=2, values_only=True)}
+    assert purchased_rows["Закупная"] == (10, 12, 22)
+
 
 
 def test_cancelled_booking_export_includes_grey_row(test_client, db_session):

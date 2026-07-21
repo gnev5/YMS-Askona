@@ -3,7 +3,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_
 from typing import List
-from datetime import datetime, timedelta, time, timezone
+from collections import defaultdict
+from datetime import date, datetime, timedelta, time, timezone
 import uuid
 import logging
 from .. import models, schemas
@@ -12,7 +13,7 @@ from ..deps import get_current_user
 from .prr_limits import get_duration
 from ..quota_utils import calculate_used_volume, get_quota_for_date
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Font, PatternFill
 from io import BytesIO
 
 router = APIRouter()
@@ -22,6 +23,150 @@ EXPORT_RED_FILL = PatternFill(fill_type="solid", fgColor="FFFEE2E2")
 EXPORT_ORANGE_FILL = PatternFill(fill_type="solid", fgColor="FFFED7AA")
 EXPORT_YELLOW_FILL = PatternFill(fill_type="solid", fgColor="FFFEF9C3")
 EXPORT_GREY_FILL = PatternFill(fill_type="solid", fgColor="FFE5E7EB")
+EXPORT_SUMMARY_HEADER_FILL = PatternFill(fill_type="solid", fgColor="FFE0F2FE")
+OWN_PRODUCTION_REPORT_ROWS = [
+    "Лопатина",
+    "Почаевский",
+    "Солвис",
+    "Софт Слип",
+    "Социалистическая",
+    "ЦРСГП",
+]
+OWN_PRODUCTION_FIXED_CUBES = {
+    "Лопатина": 38,
+    "Почаевский": 64,
+    "Солвис": 31,
+    "ЦРСГП": 64,
+}
+
+
+def _normalize_report_text(value: str | None) -> str:
+    return (value or "").strip().lower().replace("ё", "е")
+
+
+def _resolve_own_production_report_direction(supplier_name: str | None) -> str | None:
+    normalized = _normalize_report_text(supplier_name)
+    if "лопатина" in normalized and "литвуд" in normalized:
+        return "Лопатина"
+    if "почайк" in normalized or "почаев" in normalized:
+        return "Почаевский"
+    if "солвис" in normalized:
+        return "Солвис"
+    if "софт слип" in normalized and ("ковров" in normalized or "владимир" in normalized):
+        return "Софт Слип"
+    if "социальст" in normalized or "социалист" in normalized:
+        return "Социалистическая"
+    if "црсгп" in normalized:
+        return "ЦРСГП"
+    return None
+
+
+def _is_purchased_report_row(transport_type_name: str | None) -> bool:
+    return _normalize_report_text(transport_type_name) == "закупная"
+
+
+def _is_own_production_report_row(transport_type_name: str | None) -> bool:
+    normalized = _normalize_report_text(transport_type_name)
+    return normalized in {"собственное производство", "собственное"}
+
+
+def _parse_report_booking_date(serialized: dict) -> date | None:
+    raw_date = serialized.get("booking_date")
+    if not raw_date:
+        return None
+    try:
+        booking_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+    raw_start = (serialized.get("start_time") or "")[:5]
+    try:
+        start_time = datetime.strptime(raw_start, "%H:%M").time()
+    except ValueError:
+        start_time = time(0, 0)
+
+    if start_time >= time(22, 0):
+        return booking_date + timedelta(days=1)
+    return booking_date
+
+
+def _report_number(value) -> float:
+    if value is None or value == "":
+        return 0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _report_cell_number(value: float):
+    return int(value) if float(value).is_integer() else value
+
+
+def _append_summary_table(ws, first_column_label: str, rows: list[tuple[str, dict[date, float]]], report_dates: list[date]):
+    header = [first_column_label, *[d.isoformat() for d in report_dates], "Общий итог"]
+    ws.append(header)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = EXPORT_SUMMARY_HEADER_FILL
+
+    for label, values_by_date in rows:
+        total = sum(values_by_date.values())
+        ws.append([
+            label,
+            *[_report_cell_number(values_by_date.get(report_date, 0)) for report_date in report_dates],
+            _report_cell_number(total),
+        ])
+
+    ws.freeze_panes = "B2"
+    ws.column_dimensions["A"].width = max(len(first_column_label), 24)
+    for idx in range(2, len(header) + 1):
+        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = 14
+
+
+def _append_bookings_report_sheets(wb: Workbook, serialized_rows: list[dict]) -> None:
+    own_totals: dict[str, dict[date, float]] = {
+        label: defaultdict(float) for label in OWN_PRODUCTION_REPORT_ROWS
+    }
+    purchased_totals: dict[str, dict[date, float]] = {"Закупная": defaultdict(float)}
+    report_dates: set[date] = set()
+
+    for serialized in serialized_rows:
+        report_date = _parse_report_booking_date(serialized)
+        if report_date is None:
+            continue
+
+        transport_type_name = serialized.get("transport_type_name")
+        supplier_name = serialized.get("supplier_name")
+        direction = _resolve_own_production_report_direction(supplier_name)
+
+        if direction is not None and _is_own_production_report_row(transport_type_name):
+            cubes = OWN_PRODUCTION_FIXED_CUBES.get(direction)
+            if cubes is None:
+                cubes = _report_number(serialized.get("cubes"))
+            own_totals[direction][report_date] += cubes
+            report_dates.add(report_date)
+            continue
+
+        if _is_purchased_report_row(transport_type_name):
+            purchased_totals["Закупная"][report_date] += _report_number(serialized.get("cubes"))
+            report_dates.add(report_date)
+
+    ordered_dates = sorted(report_dates)
+
+    own_rows = [(label, own_totals[label]) for label in OWN_PRODUCTION_REPORT_ROWS]
+    own_grand_total = defaultdict(float)
+    for _label, values_by_date in own_rows:
+        for report_date, value in values_by_date.items():
+            own_grand_total[report_date] += value
+    own_rows.append(("Общий итог", own_grand_total))
+
+    own_ws = wb.create_sheet(title="Собственное производство")
+    _append_summary_table(own_ws, "Направление", own_rows, ordered_dates)
+
+    purchased_ws = wb.create_sheet(title="Закупная")
+    _append_summary_table(purchased_ws, "Тип перевозки", [("Закупная", purchased_totals["Закупная"])], ordered_dates)
+
 
 def _dock_matches_supplier_zone(dock: models.Dock, supplier_zone_id: int | None) -> bool:
     if supplier_zone_id is None:
@@ -659,6 +804,8 @@ def export_bookings_xlsx(
         "ID бронирования",
     ])
 
+    export_rows: list[dict] = []
+
     for booking_id in unique_ids:
         booking = booking_by_id.get(booking_id)
         if not booking:
@@ -667,6 +814,7 @@ def export_bookings_xlsx(
         serialized = _serialize_booking(db, booking, include_user=True)
         if not serialized:
             continue
+        export_rows.append(serialized)
 
         start_time = (serialized.get("start_time") or "")[:5]
         end_time = (serialized.get("end_time") or "")[:5]
@@ -694,6 +842,8 @@ def export_bookings_xlsx(
             current_row = ws.max_row
             for col_idx in range(1, ws.max_column + 1):
                 ws.cell(row=current_row, column=col_idx).fill = row_fill
+
+    _append_bookings_report_sheets(wb, export_rows)
 
     legend_ws = wb.create_sheet(title="legend")
     legend_ws.append(["Цвет", "HEX", "Значение"])
