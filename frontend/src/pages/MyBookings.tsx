@@ -176,6 +176,8 @@ const clearedFilters = (): Filters => ({
 
 
 
+const MY_BOOKINGS_PAGE_SIZE = 200
+
 const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => void }> = ({ onBack, onBookingCancelled }) => {
 
   const { user } = useAuth()
@@ -183,6 +185,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
   const [bookings, setBookings] = useState<Booking[]>([])
 
   const [filteredBookings, setFilteredBookings] = useState<Booking[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
 
   const [loading, setLoading] = useState(false)
 
@@ -226,6 +229,13 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
       .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
 
   }, [bookings])
+
+  const totalPages = Math.max(1, Math.ceil(filteredBookings.length / MY_BOOKINGS_PAGE_SIZE))
+  const pagedBookings = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages)
+    const start = (safePage - 1) * MY_BOOKINGS_PAGE_SIZE
+    return filteredBookings.slice(start, start + MY_BOOKINGS_PAGE_SIZE)
+  }, [filteredBookings, currentPage, totalPages])
 
 
 
@@ -406,6 +416,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
 
     setFilteredBookings(filtered)
+    setCurrentPage(1)
 
   }
 
@@ -928,8 +939,42 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
       ) : (
 
-        <div style={{ overflowX: 'auto' }}>
+        <div>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            marginBottom: 12,
+            flexWrap: 'wrap',
+            color: '#4b5563',
+            fontSize: 14,
+          }}>
+            <span>
+              Показано {pagedBookings.length} из {filteredBookings.length} строк. Для полной выгрузки Excel используются все отфильтрованные строки.
+            </span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage <= 1}
+                style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, background: currentPage <= 1 ? '#f3f4f6' : 'white' }}
+              >
+                Назад
+              </button>
+              <span>Страница {Math.min(currentPage, totalPages)} из {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage >= totalPages}
+                style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, background: currentPage >= totalPages ? '#f3f4f6' : 'white' }}
+              >
+                Вперед
+              </button>
+            </div>
+          </div>
 
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
 
             <thead>
@@ -970,7 +1015,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
 
             <tbody>
 
-              {filteredBookings.map(b => (
+              {pagedBookings.map(b => (
 
                 <tr
                   key={b.id}
@@ -1066,7 +1111,7 @@ const MyBookings: React.FC<{ onBack?: () => void; onBookingCancelled?: () => voi
             </tbody>
 
           </table>
-
+          </div>
         </div>
 
       )}
