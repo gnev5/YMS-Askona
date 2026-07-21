@@ -200,15 +200,7 @@ def _is_created_today_for_today_msk(created_at: datetime, booking_date) -> bool:
     return created_msk.date() == booking_date
 
 
-def _serialize_booking(db: Session, booking: models.Booking, include_user: bool = False):
-    slots = db.query(models.TimeSlot, models.Dock).join(
-        models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
-    ).join(
-        models.Dock, models.TimeSlot.dock_id == models.Dock.id
-    ).filter(
-        models.BookingTimeSlot.booking_id == booking.id
-    ).order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
-
+def _serialize_booking_from_slots(booking: models.Booking, slots: list[tuple[models.TimeSlot, models.Dock]], include_user: bool = False):
     if not slots:
         logging.warning(f"No slots found for booking {booking.id}")
         return None
@@ -260,6 +252,51 @@ def _serialize_booking(db: Session, booking: models.Booking, include_user: bool 
         data["user_full_name"] = booking.user.full_name
 
     return data
+
+
+def _serialize_bookings_bulk(db: Session, bookings: list[models.Booking], include_user: bool = False) -> dict[int, dict]:
+    booking_ids = [booking.id for booking in bookings]
+    if not booking_ids:
+        return {}
+
+    slots_by_booking: dict[int, list[tuple[models.TimeSlot, models.Dock]]] = defaultdict(list)
+    slot_rows = db.query(models.BookingTimeSlot.booking_id, models.TimeSlot, models.Dock).join(
+        models.TimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
+    ).join(
+        models.Dock, models.TimeSlot.dock_id == models.Dock.id
+    ).options(
+        joinedload(models.Dock.object)
+    ).filter(
+        models.BookingTimeSlot.booking_id.in_(booking_ids)
+    ).order_by(
+        models.BookingTimeSlot.booking_id,
+        models.TimeSlot.slot_date,
+        models.TimeSlot.start_time,
+    ).all()
+
+    for booking_id, slot, dock in slot_rows:
+        slots_by_booking[booking_id].append((slot, dock))
+
+    serialized_by_id: dict[int, dict] = {}
+    for booking in bookings:
+        serialized = _serialize_booking_from_slots(booking, slots_by_booking.get(booking.id, []), include_user=include_user)
+        if serialized:
+            serialized_by_id[booking.id] = serialized
+    return serialized_by_id
+
+
+def _serialize_booking(db: Session, booking: models.Booking, include_user: bool = False):
+    slots = db.query(models.TimeSlot, models.Dock).join(
+        models.BookingTimeSlot, models.TimeSlot.id == models.BookingTimeSlot.time_slot_id
+    ).join(
+        models.Dock, models.TimeSlot.dock_id == models.Dock.id
+    ).options(
+        joinedload(models.Dock.object)
+    ).filter(
+        models.BookingTimeSlot.booking_id == booking.id
+    ).order_by(models.TimeSlot.slot_date, models.TimeSlot.start_time).all()
+
+    return _serialize_booking_from_slots(booking, slots, include_user=include_user)
 
 
 def _resolve_export_row_fill(serialized: dict) -> PatternFill | None:
@@ -727,13 +764,20 @@ def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = 
     if current_user.role != models.UserRole.admin:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
     
-    bookings = db.query(models.Booking).filter(
+    bookings = db.query(models.Booking).options(
+        joinedload(models.Booking.user),
+        joinedload(models.Booking.vehicle_type),
+        joinedload(models.Booking.supplier),
+        joinedload(models.Booking.zone),
+        joinedload(models.Booking.transport_type),
+    ).filter(
         models.Booking.status.in_(["confirmed", "cancelled"])
     ).order_by(models.Booking.created_at.desc()).all()
+    serialized_by_id = _serialize_bookings_bulk(db, bookings, include_user=True)
     
     result = []
     for booking in bookings:
-        serialized = _serialize_booking(db, booking, include_user=True)
+        serialized = serialized_by_id.get(booking.id)
         if serialized:
             is_owner = booking.user_id == current_user.id
             serialized["is_owner"] = is_owner
@@ -746,14 +790,21 @@ def get_all_bookings(db: Session = Depends(get_db), current_user: models.User = 
 @router.get("/my", response_model=List[schemas.BookingWithDetails])
 def get_my_bookings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """Получить все записи (бывшие \"мои\"), видны всем пользователям"""
-    bookings = db.query(models.Booking).filter(
+    bookings = db.query(models.Booking).options(
+        joinedload(models.Booking.user),
+        joinedload(models.Booking.vehicle_type),
+        joinedload(models.Booking.supplier),
+        joinedload(models.Booking.zone),
+        joinedload(models.Booking.transport_type),
+    ).filter(
         models.Booking.status.in_(["confirmed", "cancelled"])
     ).order_by(models.Booking.created_at.desc()).all()
+    serialized_by_id = _serialize_bookings_bulk(db, bookings, include_user=True)
     
     result = []
     for booking in bookings:
         # Показываем владельца и права на изменение
-        serialized = _serialize_booking(db, booking, include_user=True)
+        serialized = serialized_by_id.get(booking.id)
         if serialized:
             is_owner = booking.user_id == current_user.id
             serialized["is_owner"] = is_owner
@@ -777,6 +828,13 @@ def export_bookings_xlsx(
 
     bookings = (
         db.query(models.Booking)
+        .options(
+            joinedload(models.Booking.user),
+            joinedload(models.Booking.vehicle_type),
+            joinedload(models.Booking.supplier),
+            joinedload(models.Booking.zone),
+            joinedload(models.Booking.transport_type),
+        )
         .filter(
             models.Booking.id.in_(unique_ids),
             models.Booking.status.in_(["confirmed", "cancelled"]),
@@ -784,6 +842,7 @@ def export_bookings_xlsx(
         .all()
     )
     booking_by_id = {b.id: b for b in bookings}
+    serialized_by_id = _serialize_bookings_bulk(db, bookings, include_user=True)
 
     wb = Workbook()
     ws = wb.active
@@ -811,7 +870,7 @@ def export_bookings_xlsx(
         if not booking:
             continue
 
-        serialized = _serialize_booking(db, booking, include_user=True)
+        serialized = serialized_by_id.get(booking.id)
         if not serialized:
             continue
         export_rows.append(serialized)
