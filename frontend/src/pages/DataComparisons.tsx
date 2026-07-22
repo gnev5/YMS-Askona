@@ -13,6 +13,14 @@ type Profile = {
   is_active: boolean
 }
 
+type Difference = {
+  field?: string
+  label?: string
+  file_value?: unknown
+  yms_value?: unknown
+  message?: string
+}
+
 type RunRow = {
   id: number
   tl_number_original?: string | null
@@ -22,6 +30,7 @@ type RunRow = {
   booking_id?: number | null
   file_data?: Record<string, unknown> | null
   yms_data?: Record<string, unknown> | Record<string, unknown>[] | null
+  differences?: Difference[]
 }
 
 type ComparisonRun = {
@@ -51,7 +60,7 @@ type ResultColumn = {
   render: (row: RunRow) => React.ReactNode
 }
 
-const defaultResultColumnKeys = ['status', 'tl_number', 'file_row', 'booking_id']
+const defaultResultColumnKeys = ['status', 'tl_number', 'file_row', 'booking_id', 'differences']
 
 const statusLabels: Record<string, string> = {
   matched: 'Совпало',
@@ -74,6 +83,9 @@ const summaryOrder = [
   'missing_in_file',
   'duplicate_in_file',
   'duplicate_in_yms',
+  'field_mismatch',
+  'datetime_matched',
+  'datetime_mismatch',
 ]
 
 const summaryLabels: Record<string, string> = {
@@ -86,6 +98,9 @@ const summaryLabels: Record<string, string> = {
   missing_in_file: 'Есть в YMS, нет в файле',
   duplicate_in_file: 'Дубли в файле',
   duplicate_in_yms: 'Дубли в YMS',
+  field_mismatch: 'Расхождения по полям',
+  datetime_matched: 'Дата/время совпали',
+  datetime_mismatch: 'Дата/время не совпали',
 }
 
 const todayYmd = () => new Date().toISOString().slice(0, 10)
@@ -144,6 +159,16 @@ const formatCellValue = (value: unknown): string => {
   if (isPlainRecord(value)) return JSON.stringify(value)
   if (typeof value === 'boolean') return value ? 'Да' : 'Нет'
   return String(value)
+}
+
+const formatDifferences = (differences?: Difference[]): string => {
+  if (!differences || differences.length === 0) return '—'
+  return differences.map(diff => {
+    const label = diff.label || diff.field || 'Поле'
+    const fileValue = formatCellValue(diff.file_value)
+    const ymsValue = formatCellValue(diff.yms_value)
+    return `${label}: файл ${fileValue}, YMS ${ymsValue}`
+  }).join('; ')
 }
 
 const valueFromRecord = (record: Record<string, unknown>, column: ExtraColumn): string => {
@@ -306,6 +331,7 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       { key: 'tl_number', label: 'Номер ТЛ', render: row => row.tl_number_normalized },
       { key: 'file_row', label: 'Строка файла', render: row => row.file_row_number || '—' },
       { key: 'booking_id', label: 'ID бронирования', render: row => row.booking_id || '—' },
+      { key: 'differences', label: 'Расхождения', render: row => formatDifferences(row.differences) },
       ...activeYmsColumns.map(column => ({
         key: `yms-${column.key}`,
         label: column.label,

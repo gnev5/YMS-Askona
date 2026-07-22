@@ -1,4 +1,4 @@
-from datetime import date, time as dt_time
+from datetime import date, datetime, time as dt_time
 from io import BytesIO
 
 import pytest
@@ -98,6 +98,18 @@ def _xlsx_with_time_cell_in_file_data() -> BytesIO:
     ws = wb.active
     ws.append(["Плановое время", "Номер ТЛ"])
     ws.append([dt_time(8, 30), "TL-TIME"])
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _xlsx_with_planned_datetimes() -> BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Плановая дата/время", "Номер ТЛ"])
+    ws.append([datetime(2026, 7, 10, 10, 0), "TL-DT-OK"])
+    ws.append([datetime(2026, 7, 10, 11, 15), "TL-DT-BAD"])
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -372,6 +384,61 @@ def test_run_persists_file_and_yms_json_with_time_values(test_client, db_session
     matched = next(row for row in payload["rows"] if row["status"] == "matched")
     assert matched["file_data"]["Плановое время"] == "08:30:00"
     assert matched["yms_data"]["start_time"] == "10:00:00"
+
+def test_run_compares_configured_file_datetime_with_yms_booking_start(test_client, db_session, admin_user):
+    obj = models.Object(name="РЦ Дата время", object_type=models.ObjectType.warehouse)
+    db_session.add(obj)
+    db_session.commit()
+
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-DT-OK", slot_date=date(2026, 7, 10))
+    _add_booking(db_session, user_id=admin_user.id, object_id=obj.id, direction="in", tl_number="TL-DT-BAD", slot_date=date(2026, 7, 10))
+
+    profile_response = test_client.post(
+        "/api/data-comparisons/profiles",
+        json={
+            "name": "РЦ Дата время — Вход",
+            "object_id": obj.id,
+            "direction": "in",
+            "tl_column_letter": "b",
+            "status_filters": ["confirmed"],
+            "file_settings": {"datetime_column_letter": "A"},
+        },
+    )
+    assert profile_response.status_code == 200
+    assert profile_response.json()["file_settings"]["datetime_column_letter"] == "A"
+
+    response = test_client.post(
+        "/api/data-comparisons/runs",
+        data={
+            "profile_id": str(profile_response.json()["id"]),
+            "date_from": "2026-07-10",
+            "date_to": "2026-07-10",
+            "file_start_row": "2",
+        },
+        files={"file": ("comparison.xlsx", _xlsx_with_planned_datetimes(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["matched"] == 1
+    assert payload["summary"]["field_mismatch"] == 1
+    assert payload["summary"]["datetime_matched"] == 1
+    assert payload["summary"]["datetime_mismatch"] == 1
+
+    rows_by_tl = {row["tl_number_normalized"]: row for row in payload["rows"]}
+    assert rows_by_tl["TL-DT-OK"]["status"] == "matched"
+    assert rows_by_tl["TL-DT-OK"]["differences"] == []
+    assert rows_by_tl["TL-DT-BAD"]["status"] == "field_mismatch"
+    assert rows_by_tl["TL-DT-BAD"]["differences"] == [
+        {
+            "field": "booking_datetime",
+            "label": "Дата и время записи",
+            "file_value": "2026-07-10 11:15:00",
+            "yms_value": "2026-07-10 10:00:00",
+            "message": "Дата/время в файле не совпадает с записью YMS",
+        }
+    ]
+
 
 def test_profile_snapshot_columns_limit_saved_excel_file_data(test_client, db_session, admin_user):
     obj = models.Object(name="РЦ Снимок", object_type=models.ObjectType.warehouse)

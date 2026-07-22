@@ -1,5 +1,5 @@
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from typing import Any
 
@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+from openpyxl.utils.datetime import from_excel
 from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload
 
@@ -27,6 +28,82 @@ def normalize_tl_number(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip().upper()
+
+
+def _format_comparison_datetime(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_file_datetime(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0)
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return datetime.combine(value, time.min)
+    if isinstance(value, time):
+        return datetime.combine(date.min, value).replace(microsecond=0)
+    if isinstance(value, (int, float)):
+        try:
+            parsed = from_excel(value)
+            if isinstance(parsed, datetime):
+                return parsed.replace(microsecond=0)
+            if isinstance(parsed, time):
+                return datetime.combine(date.min, parsed).replace(microsecond=0)
+            if isinstance(parsed, date):
+                return datetime.combine(parsed, time.min)
+        except Exception:
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text.replace("T", " ")
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+    ):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text).replace(microsecond=0)
+    except ValueError:
+        return None
+
+
+def _yms_booking_datetime(yms_data: dict | None) -> datetime | None:
+    if not isinstance(yms_data, dict):
+        return None
+    booking_date = yms_data.get("booking_date")
+    start_time = yms_data.get("start_time")
+    if not booking_date or not start_time:
+        return None
+    try:
+        parsed_date = date.fromisoformat(str(booking_date))
+        parsed_time = time.fromisoformat(str(start_time))
+        return datetime.combine(parsed_date, parsed_time).replace(microsecond=0)
+    except ValueError:
+        return None
+
+
+def _datetime_differences(file_datetime: datetime | None, yms_data: dict | None) -> list[dict]:
+    if file_datetime is None:
+        return []
+    yms_datetime = _yms_booking_datetime(yms_data)
+    if yms_datetime is None or file_datetime == yms_datetime:
+        return []
+    return [{
+        "field": "booking_datetime",
+        "label": "Дата и время записи",
+        "file_value": _format_comparison_datetime(file_datetime),
+        "yms_value": _format_comparison_datetime(yms_datetime),
+        "message": "Дата/время в файле не совпадает с записью YMS",
+    }]
 
 
 def _profile_to_dict(profile: models.DataComparisonProfile) -> dict:
@@ -152,6 +229,7 @@ def _parse_xlsx_rows(
     file_start_row: int = 2,
     file_end_row: int | None = None,
     snapshot_columns: Any = None,
+    datetime_column_letter: str | None = None,
 ) -> list[dict]:
     wb = load_workbook(BytesIO(content), data_only=True)
     ws = wb.active
@@ -163,6 +241,10 @@ def _parse_xlsx_rows(
         raise HTTPException(status_code=400, detail="Строка окончания не может быть меньше строки начала")
 
     normalized_letter = _normalize_excel_column_letter(tl_column_letter)
+    normalized_datetime_letter = _normalize_excel_column_letter(datetime_column_letter)
+    datetime_column_index = column_index_from_string(normalized_datetime_letter) if normalized_datetime_letter else None
+    if datetime_column_index and datetime_column_index > ws.max_column:
+        raise HTTPException(status_code=400, detail=f"В файле нет столбца даты/времени '{normalized_datetime_letter}'")
     parsed = []
     if normalized_letter:
         column_index = column_index_from_string(normalized_letter)
@@ -175,11 +257,13 @@ def _parse_xlsx_rows(
             if not tl_normalized:
                 continue
             row_values = _worksheet_row_values(ws, row_number, snapshot_column_indices)
+            file_datetime = _parse_file_datetime(ws.cell(row=row_number, column=datetime_column_index).value) if datetime_column_index else None
             parsed.append({
                 "row_number": row_number,
                 "tl_original": str(tl_original).strip() if tl_original is not None else "",
                 "tl_normalized": tl_normalized,
                 "data": row_values,
+                "file_datetime": file_datetime,
             })
         return parsed
 
@@ -197,6 +281,9 @@ def _parse_xlsx_rows(
             if headers[col_idx] and (snapshot_column_indices is None or col_idx + 1 in snapshot_column_indices)
         }
         tl_original = values[headers.index(tl_column_name)] if headers.index(tl_column_name) < len(values) else None
+        file_datetime = None
+        if datetime_column_index and datetime_column_index - 1 < len(values):
+            file_datetime = _parse_file_datetime(values[datetime_column_index - 1])
         tl_normalized = normalize_tl_number(tl_original)
         if not tl_normalized:
             continue
@@ -205,6 +292,7 @@ def _parse_xlsx_rows(
             "tl_original": str(tl_original).strip() if tl_original is not None else "",
             "tl_normalized": tl_normalized,
             "data": data,
+            "file_datetime": file_datetime,
         })
     return parsed
 
@@ -349,13 +437,15 @@ async def create_run(
     if end_row is not None and end_row < start_row:
         raise HTTPException(status_code=400, detail="Строка окончания не может быть меньше строки начала")
     content = await file.read()
+    file_settings = profile.file_settings or {}
     file_rows = _parse_xlsx_rows(
         content,
         profile.tl_column_name,
         profile.tl_column_letter,
         start_row,
         end_row,
-        (profile.file_settings or {}).get("snapshot_columns"),
+        file_settings.get("snapshot_columns"),
+        file_settings.get("datetime_column_letter"),
     )
     extended_from = date_from - timedelta(days=2)
     extended_to = date_to + timedelta(days=2)
@@ -392,6 +482,13 @@ async def create_run(
         "duplicate_in_file": 0,
         "duplicate_in_yms": 0,
     }
+    datetime_comparison_enabled = bool(file_settings.get("datetime_column_letter"))
+    if datetime_comparison_enabled:
+        summary.update({
+            "field_mismatch": 0,
+            "datetime_matched": 0,
+            "datetime_mismatch": 0,
+        })
     rows_to_save = []
     file_counts = Counter(row["tl_normalized"] for row in file_rows)
     duplicate_file_tl = {tl for tl, count in file_counts.items() if count > 1}
@@ -420,6 +517,14 @@ async def create_run(
             status = "missing_in_yms"
             yms_data = None
             booking_id = None
+        differences = []
+        if status == "matched" and file_row.get("file_datetime") is not None:
+            differences = _datetime_differences(file_row.get("file_datetime"), yms_data if isinstance(yms_data, dict) else None)
+            if differences:
+                status = "field_mismatch"
+                summary["datetime_mismatch"] += 1
+            else:
+                summary["datetime_matched"] += 1
         summary[status] += 1
         rows_to_save.append(models.DataComparisonRunRow(
             run_id=run.id,
@@ -430,7 +535,7 @@ async def create_run(
             booking_id=booking_id,
             file_data=jsonable_encoder(file_row["data"]),
             yms_data=jsonable_encoder(yms_data),
-            differences=[],
+            differences=jsonable_encoder(differences),
         ))
 
     for tl, bookings in primary_by_tl.items():

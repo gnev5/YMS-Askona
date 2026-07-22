@@ -14,6 +14,7 @@ type Profile = {
   status_filters: string[]
   file_settings?: {
     snapshot_columns?: string
+    datetime_column_letter?: string
     [key: string]: any
   }
   is_active: boolean
@@ -31,6 +32,7 @@ type ProfileForm = {
   objectId: string
   direction: 'in' | 'out'
   tlColumnLetter: string
+  datetimeColumnLetter: string
   snapshotColumns: string
   statusFiltersText: string
   isActive: boolean
@@ -41,6 +43,7 @@ const emptyForm = (): ProfileForm => ({
   objectId: '',
   direction: 'in',
   tlColumnLetter: 'G',
+  datetimeColumnLetter: '',
   snapshotColumns: '',
   statusFiltersText: 'confirmed',
   isActive: true,
@@ -99,6 +102,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       objectId: String(profile.object_id),
       direction: profile.direction,
       tlColumnLetter: profile.tl_column_letter || 'G',
+      datetimeColumnLetter: profile.file_settings?.datetime_column_letter || '',
       snapshotColumns: profile.file_settings?.snapshot_columns || '',
       statusFiltersText: (profile.status_filters || ['confirmed']).join(', '),
       isActive: profile.is_active,
@@ -113,6 +117,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       objectId: String(profile.object_id),
       direction: profile.direction,
       tlColumnLetter: profile.tl_column_letter || 'G',
+      datetimeColumnLetter: profile.file_settings?.datetime_column_letter || '',
       snapshotColumns: profile.file_settings?.snapshot_columns || '',
       statusFiltersText: (profile.status_filters || ['confirmed']).join(', '),
       isActive: true,
@@ -131,6 +136,10 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       .split(',')
       .map(status => status.trim())
       .filter(Boolean)
+    const fileSettings = {
+      ...(form.snapshotColumns.trim() ? { snapshot_columns: form.snapshotColumns.trim().toUpperCase() } : {}),
+      ...(form.datetimeColumnLetter.trim() ? { datetime_column_letter: form.datetimeColumnLetter.trim().toUpperCase() } : {}),
+    }
     const payload = {
       name: form.name.trim(),
       object_id: Number(form.objectId),
@@ -139,7 +148,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
       tl_column_letter: form.tlColumnLetter.trim().toUpperCase(),
       status_filters: statusFilters.length > 0 ? statusFilters : ['confirmed'],
       yms_filters: {},
-      file_settings: form.snapshotColumns.trim() ? { snapshot_columns: form.snapshotColumns.trim().toUpperCase() } : {},
+      file_settings: fileSettings,
       comparison_settings: {},
       is_active: form.isActive,
     }
@@ -205,7 +214,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
 
       <section className="card">
         <h2>{form.id ? 'Редактировать профиль' : 'Создать профиль'}</h2>
-        <form onSubmit={saveProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1.5fr 2fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
+        <form onSubmit={saveProfile} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1.5fr 2fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
           <label>
             Название профиля
             <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="РЦ Краснодар — Вход" />
@@ -228,6 +237,10 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
           <label>
             Столбец с номером ТЛ
             <input value={form.tlColumnLetter} onChange={e => setForm({ ...form, tlColumnLetter: e.target.value.toUpperCase() })} placeholder="G" maxLength={3} />
+          </label>
+          <label>
+            Столбец с датой и временем записи
+            <input value={form.datetimeColumnLetter} onChange={e => setForm({ ...form, datetimeColumnLetter: e.target.value.toUpperCase() })} placeholder="A" maxLength={3} />
           </label>
           <label>
             Колонки Excel для снимка
@@ -259,6 +272,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
                 <th>Объект / РЦ</th>
                 <th>Направление</th>
                 <th>Столбец ТЛ</th>
+                <th>Дата/время файла</th>
                 <th>Снимок Excel</th>
                 <th>Статусы YMS</th>
                 <th>Активен</th>
@@ -272,6 +286,7 @@ const DataComparisonProfiles: React.FC<{ onBack?: () => void }> = ({ onBack }) =
                   <td>{profile.object_name || profile.object_id}</td>
                   <td>{profile.direction === 'in' ? 'Вход' : 'Выход'}</td>
                   <td>{profile.tl_column_letter || '—'}</td>
+                  <td>{profile.file_settings?.datetime_column_letter || '—'}</td>
                   <td>{profile.file_settings?.snapshot_columns || 'Все колонки'}</td>
                   <td>{(profile.status_filters || []).join(', ')}</td>
                   <td>{profile.is_active ? 'Да' : 'Нет'}</td>
