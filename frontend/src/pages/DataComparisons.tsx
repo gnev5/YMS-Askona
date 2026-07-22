@@ -60,7 +60,7 @@ type ResultColumn = {
   render: (row: RunRow) => React.ReactNode
 }
 
-const defaultResultColumnKeys = ['status', 'tl_number', 'file_row', 'booking_id', 'differences']
+const defaultResultColumnKeys = ['status', 'tl_number', 'file_row', 'file_booking_date', 'file_start_time', 'booking_id', 'differences']
 
 const statusLabels: Record<string, string> = {
   matched: 'Совпало',
@@ -330,6 +330,8 @@ const DataComparisons: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       { key: 'status', label: 'Статус', render: row => statusLabels[row.status] || row.status },
       { key: 'tl_number', label: 'Номер ТЛ', render: row => row.tl_number_normalized },
       { key: 'file_row', label: 'Строка файла', render: row => row.file_row_number || '—' },
+      { key: 'file_booking_date', label: 'Дата записи (файл)', render: row => isPlainRecord(row.file_data) ? formatCellValue(row.file_data['Дата записи (файл)']) : '—' },
+      { key: 'file_start_time', label: 'Время записи (файл)', render: row => isPlainRecord(row.file_data) ? formatCellValue(row.file_data['Время записи (файл)']) : '—' },
       { key: 'booking_id', label: 'ID бронирования', render: row => row.booking_id || '—' },
       { key: 'differences', label: 'Расхождения', render: row => formatDifferences(row.differences) },
       ...activeYmsColumns.map(column => ({

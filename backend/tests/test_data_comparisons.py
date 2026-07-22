@@ -429,6 +429,8 @@ def test_run_compares_configured_file_date_and_time_columns_with_yms_booking_sta
     rows_by_tl = {row["tl_number_normalized"]: row for row in payload["rows"]}
     assert rows_by_tl["TL-DT-OK"]["status"] == "matched"
     assert rows_by_tl["TL-DT-OK"]["differences"] == []
+    assert rows_by_tl["TL-DT-OK"]["file_data"]["Дата записи (файл)"] == "2026-07-10"
+    assert rows_by_tl["TL-DT-OK"]["file_data"]["Время записи (файл)"] == "10:00:00"
     assert rows_by_tl["TL-DT-BAD"]["status"] == "field_mismatch"
     assert rows_by_tl["TL-DT-BAD"]["differences"] == [
         {

@@ -169,6 +169,15 @@ def _date_time_differences(file_date: date | None, file_time: time | None, yms_d
     return differences
 
 
+def _file_data_with_comparison_fields(file_row: dict) -> dict:
+    file_data = dict(file_row.get("data") or {})
+    if file_row.get("file_date") is not None:
+        file_data["Дата записи (файл)"] = _format_comparison_date(file_row["file_date"])
+    if file_row.get("file_time") is not None:
+        file_data["Время записи (файл)"] = _format_comparison_time(file_row["file_time"])
+    return file_data
+
+
 def _profile_to_dict(profile: models.DataComparisonProfile) -> dict:
     return {
         "id": profile.id,
@@ -604,7 +613,7 @@ async def create_run(
             status=status,
             file_row_number=file_row["row_number"],
             booking_id=booking_id,
-            file_data=jsonable_encoder(file_row["data"]),
+            file_data=jsonable_encoder(_file_data_with_comparison_fields(file_row)),
             yms_data=jsonable_encoder(yms_data),
             differences=jsonable_encoder(differences),
         ))
