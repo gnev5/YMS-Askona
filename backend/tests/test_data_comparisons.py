@@ -1,4 +1,4 @@
-from datetime import date, datetime, time as dt_time
+from datetime import date, time as dt_time
 from io import BytesIO
 
 import pytest
@@ -104,12 +104,12 @@ def _xlsx_with_time_cell_in_file_data() -> BytesIO:
     return buf
 
 
-def _xlsx_with_planned_datetimes() -> BytesIO:
+def _xlsx_with_planned_date_and_time_columns() -> BytesIO:
     wb = Workbook()
     ws = wb.active
-    ws.append(["Плановая дата/время", "Номер ТЛ"])
-    ws.append([datetime(2026, 7, 10, 10, 0), "TL-DT-OK"])
-    ws.append([datetime(2026, 7, 10, 11, 15), "TL-DT-BAD"])
+    ws.append(["Плановая дата", "Плановое время", "Номер ТЛ"])
+    ws.append([date(2026, 7, 10), dt_time(10, 0), "TL-DT-OK"])
+    ws.append([date(2026, 7, 10), dt_time(11, 15), "TL-DT-BAD"])
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -385,7 +385,7 @@ def test_run_persists_file_and_yms_json_with_time_values(test_client, db_session
     assert matched["file_data"]["Плановое время"] == "08:30:00"
     assert matched["yms_data"]["start_time"] == "10:00:00"
 
-def test_run_compares_configured_file_datetime_with_yms_booking_start(test_client, db_session, admin_user):
+def test_run_compares_configured_file_date_and_time_columns_with_yms_booking_start(test_client, db_session, admin_user):
     obj = models.Object(name="РЦ Дата время", object_type=models.ObjectType.warehouse)
     db_session.add(obj)
     db_session.commit()
@@ -399,13 +399,14 @@ def test_run_compares_configured_file_datetime_with_yms_booking_start(test_clien
             "name": "РЦ Дата время — Вход",
             "object_id": obj.id,
             "direction": "in",
-            "tl_column_letter": "b",
+            "tl_column_letter": "c",
             "status_filters": ["confirmed"],
-            "file_settings": {"datetime_column_letter": "A"},
+            "file_settings": {"date_column_letter": "A", "time_column_letter": "B"},
         },
     )
     assert profile_response.status_code == 200
-    assert profile_response.json()["file_settings"]["datetime_column_letter"] == "A"
+    assert profile_response.json()["file_settings"]["date_column_letter"] == "A"
+    assert profile_response.json()["file_settings"]["time_column_letter"] == "B"
 
     response = test_client.post(
         "/api/data-comparisons/runs",
@@ -415,7 +416,7 @@ def test_run_compares_configured_file_datetime_with_yms_booking_start(test_clien
             "date_to": "2026-07-10",
             "file_start_row": "2",
         },
-        files={"file": ("comparison.xlsx", _xlsx_with_planned_datetimes(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        files={"file": ("comparison.xlsx", _xlsx_with_planned_date_and_time_columns(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
 
     assert response.status_code == 200
@@ -431,11 +432,11 @@ def test_run_compares_configured_file_datetime_with_yms_booking_start(test_clien
     assert rows_by_tl["TL-DT-BAD"]["status"] == "field_mismatch"
     assert rows_by_tl["TL-DT-BAD"]["differences"] == [
         {
-            "field": "booking_datetime",
-            "label": "Дата и время записи",
-            "file_value": "2026-07-10 11:15:00",
-            "yms_value": "2026-07-10 10:00:00",
-            "message": "Дата/время в файле не совпадает с записью YMS",
+            "field": "start_time",
+            "label": "Время записи",
+            "file_value": "11:15:00",
+            "yms_value": "10:00:00",
+            "message": "Время в файле не совпадает с записью YMS",
         }
     ]
 
